@@ -25,7 +25,10 @@ class CDVDFileInfo
 {
 public:
   static std::unique_ptr<CTexture> ExtractThumbToTexture(const CFileItem& fileItem,
-                                                         int chapterNumber = 0);
+                                                         int chapterNumber = 0,
+                                                         int64_t positionMs = -1,
+                                                         unsigned int maximumWidth = 0,
+                                                         int64_t* decodedPTS = nullptr);
 
   /*!
    * @brief Can a thumbnail image and file stream details be extracted from this file item?

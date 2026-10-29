@@ -33,6 +33,7 @@
 #include "network/Zeroconf.h"
 #include "network/ZeroconfBrowser.h"
 #include "peripherals/Peripherals.h"
+#include "platform/Environment.h"
 #include "rendering/dx/RenderContext.h"
 #include "settings/DisplaySettings.h"
 #include "storage/MediaManager.h"
@@ -241,6 +242,14 @@ LRESULT CALLBACK CWinEventsWin32::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, L
 
   XBMC_Event newEvent = {};
   static HDEVNOTIFY hDeviceNotify;
+
+  if (uMsg == WM_GETMINMAXINFO && CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1")
+  {
+    // The hidden render target must also fit videos larger than the desktop.
+    auto* limits = reinterpret_cast<MINMAXINFO*>(lParam);
+    limits->ptMaxTrackSize = {16384, 16384};
+    return 0;
+  }
 
   if (uMsg == WM_CREATE)
   {

@@ -9,6 +9,7 @@
 #include "PlatformDarwinOSX.h"
 
 #include "Util.h"
+#include "platform/Environment.h"
 #include "filesystem/SpecialProtocol.h"
 
 #if defined(HAS_GL)
@@ -30,6 +31,8 @@ bool CPlatformDarwinOSX::InitStageOne()
 {
   if (!CPlatformDarwin::InitStageOne())
     return false;
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1")
+    return true; // GoFuse owns packaging, windowing and app lifecycle.
 
 #if defined(HAS_GL)
   CWinSystemOSXGL::Register();

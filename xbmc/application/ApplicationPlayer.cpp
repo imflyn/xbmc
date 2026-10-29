@@ -84,6 +84,22 @@ void CApplicationPlayer::CloseFile(bool reopen)
   }
 }
 
+bool CApplicationPlayer::AttachEmbeddedPlayer(const std::shared_ptr<IPlayer>& player)
+{
+  std::unique_lock lock(m_playerLock);
+  if (m_pPlayer || !player)
+    return false;
+  m_pPlayer = player;
+  return true;
+}
+
+void CApplicationPlayer::DetachEmbeddedPlayer(const IPlayer* player)
+{
+  std::unique_lock lock(m_playerLock);
+  if (m_pPlayer.get() == player)
+    m_pPlayer.reset();
+}
+
 void CApplicationPlayer::CreatePlayer(const CPlayerCoreFactory &factory, const std::string &player, IPlayerCallback& callback)
 {
   std::unique_lock lock(m_playerLock);

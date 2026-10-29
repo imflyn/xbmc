@@ -9061,6 +9061,10 @@ ScraperPtr CVideoDatabase::GetScraperForPath(const std::string& strPath,
 
 bool CVideoDatabase::GetUseAllExternalAudioForVideo(const std::string& videoPath)
 {
+  // An embedded player has no Kodi video library. Named sidecar audio scanning
+  // remains available; an unopened database cannot supply a library override.
+  if (!m_pDS)
+    return false;
   // Find longest configured source path for given video path
   std::string strSQL = PrepareSQL("SELECT allAudio FROM path WHERE allAudio IS NOT NULL AND "
                                   "instr('%s', strPath) = 1 ORDER BY length(strPath) DESC LIMIT 1",

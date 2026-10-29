@@ -43,6 +43,9 @@ public:
   float GetPlaySpeed() const;
   float GetPlayTempo() const;
   bool HasPlayer() const;
+  // Embed host supplies the same real player used by its control/frame bridge.
+  bool AttachEmbeddedPlayer(const std::shared_ptr<IPlayer>& player);
+  void DetachEmbeddedPlayer(const IPlayer* player);
   bool OpenFile(const CFileItem& item, const CPlayerOptions& options,
                 const CPlayerCoreFactory &factory,
                 const std::string &playerName, IPlayerCallback& callback);

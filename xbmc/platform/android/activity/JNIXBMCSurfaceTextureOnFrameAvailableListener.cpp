@@ -9,6 +9,7 @@
 #include "JNIXBMCSurfaceTextureOnFrameAvailableListener.h"
 
 #include "CompileInfo.h"
+#include "platform/Environment.h"
 
 #include <androidjni/Context.h>
 #include <androidjni/jutils-details.hpp>
@@ -39,6 +40,8 @@ CJNIXBMCSurfaceTextureOnFrameAvailableListener::~CJNIXBMCSurfaceTextureOnFrameAv
 
 void CJNIXBMCSurfaceTextureOnFrameAvailableListener::RegisterNatives(JNIEnv* env)
 {
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1")
+    s_className = "com/gofuse/kodi/KodiFrameListener";
   jclass cClass = env->FindClass(s_className.c_str());
   if(cClass)
   {

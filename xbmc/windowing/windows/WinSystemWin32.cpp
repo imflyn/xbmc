@@ -235,8 +235,11 @@ bool CWinSystemWin32::CreateNewWindow(const std::string& name, bool fullScreen, 
   AdjustWindow(true);
 
   // Show the window
-  ShowWindow( m_hWnd, SW_SHOWDEFAULT );
-  UpdateWindow( m_hWnd );
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") != "1")
+  {
+    ShowWindow(m_hWnd, SW_SHOWDEFAULT);
+    UpdateWindow(m_hWnd);
+  }
 
   // Configure the tray icon.
   m_trayIcon.cbSize = sizeof(m_trayIcon);
@@ -484,7 +487,7 @@ void CWinSystemWin32::AdjustWindow(bool forceResize)
     rc.top,
     rc.right - rc.left,
     rc.bottom - rc.top,
-    SWP_SHOWWINDOW | SWP_DRAWFRAME
+    (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1" ? SWP_NOACTIVATE : SWP_SHOWWINDOW) | SWP_DRAWFRAME
   );
 }
 

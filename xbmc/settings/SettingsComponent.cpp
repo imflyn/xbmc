@@ -17,9 +17,7 @@
 #ifdef TARGET_DARWIN_EMBEDDED
 #include "platform/darwin/ios-common/DarwinEmbedUtils.h"
 #endif
-#ifdef TARGET_WINDOWS
 #include "platform/Environment.h"
-#endif
 #include "profiles/ProfileManager.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/Settings.h"
@@ -322,7 +320,23 @@ void CSettingsComponent::Initialize()
     const UserDirectoriesLocation loc = params->GetUserDirectoriesLocation();
 
     // only the InitDirectories* for the current platform should return true
-    InitDirectoriesLinux(loc) || InitDirectoriesOSX(loc) || InitDirectoriesWin32(loc);
+    // Embedded playback owns its resource/profile roots. Never touch a user's
+    // standalone Kodi directories when running inside GoFuse.
+    const auto embedResources = CEnvironment::getenv("GOFUSE_KODI_RESOURCES");
+    const auto embedProfile = CEnvironment::getenv("GOFUSE_KODI_PROFILE");
+    if (!embedResources.empty() && !embedProfile.empty())
+    {
+      CSpecialProtocol::SetXBMCBinPath(embedResources);
+      CSpecialProtocol::SetXBMCPath(embedResources);
+      CSpecialProtocol::SetXBMCBinAddonPath(embedResources + "/addons");
+      CSpecialProtocol::SetHomePath(embedProfile);
+      CSpecialProtocol::SetMasterProfilePath(embedProfile + "/userdata");
+      CSpecialProtocol::SetTempPath(embedProfile + "/cache");
+      CSpecialProtocol::SetLogPath(embedProfile + "/logs");
+      CreateUserDirs();
+    }
+    else
+      InitDirectoriesLinux(loc) || InitDirectoriesOSX(loc) || InitDirectoriesWin32(loc);
 
     m_settings->Initialize();
 

@@ -217,6 +217,9 @@ public:
    * Returned Windows class pointer is ID3D11DeviceContext1.
    */
   virtual void* GetHWContext() { return nullptr; }
+  // Offscreen embedders provide the real owner-thread Apple GL context without
+  // inheriting Kodi's application-window/controller implementations.
+  virtual void* GetEmbeddedGLContext() { return nullptr; }
 
   std::shared_ptr<CDPMSSupport> GetDPMSManager();
 

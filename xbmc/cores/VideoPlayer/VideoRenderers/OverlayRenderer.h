@@ -91,6 +91,7 @@ namespace OVERLAY {
 
     // pixels are already HDR, matching video's colorimetry
     bool m_isHDROverlay{false};
+    bool m_embedBitmap{false};
 
   protected:
     /*!
@@ -165,12 +166,14 @@ namespace OVERLAY {
      * \param save If true, the value will be saved to resolution info
      */
     void SetSubtitleVerticalPosition(const int value, bool save);
+    void SetEmbedBitmapStyle(float scale, float position);
 
   protected:
     /*!
      * \brief Reset the subtitle position to default value
      */
     void ResetSubtitlePosition();
+    float m_embedBitmapScale{1.0f}, m_embedBitmapPosition{100.0f};
 
     /*!
      * \brief Called when the screen resolution is changed

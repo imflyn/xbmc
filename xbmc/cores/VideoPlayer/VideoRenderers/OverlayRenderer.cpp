@@ -296,6 +296,17 @@ void CRenderer::Render(COverlay* o)
 
   state.x += GetStereoscopicDepth();
 
+  if (o->m_embedBitmap)
+  {
+    const float center = m_rv.x1 + m_rv.Width() * 0.5f;
+    const float bottom = m_rv.y1 + m_rv.Height();
+    state.x = center + (state.x - center) * m_embedBitmapScale;
+    state.y = bottom + (state.y - bottom) * m_embedBitmapScale -
+              (100.0f - m_embedBitmapPosition) * m_rv.Height() / 100.0f;
+    state.width *= m_embedBitmapScale;
+    state.height *= m_embedBitmapScale;
+  }
+
   o->Render(state);
 }
 
@@ -363,6 +374,14 @@ void CRenderer::SetSubtitleVerticalPosition(const int value, bool save)
     // to avoid saving to disk too many times
     m_saveSubtitlePosition = true;
   }
+}
+
+void CRenderer::SetEmbedBitmapStyle(float scale, float position)
+{
+  std::unique_lock lock(m_section);
+  m_embedBitmapScale = scale;
+  m_embedBitmapPosition = position;
+  MarkDirty();
 }
 
 void CRenderer::ResetSubtitlePosition()
@@ -606,6 +625,9 @@ std::shared_ptr<COverlay> CRenderer::Convert(SElement& e)
     r = COverlay::Create(static_cast<CDVDOverlayImage&>(o), m_rs);
   else if (o.IsOverlayType(DVDOVERLAY_TYPE_SPU))
     r = COverlay::Create(static_cast<CDVDOverlaySpu&>(o));
+
+  if (r)
+    r->m_embedBitmap = true;
 
   m_textureCache[m_textureid] = r;
   o.m_textureid = m_textureid;

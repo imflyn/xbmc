@@ -7,6 +7,7 @@
  */
 
 #include "ProcessInfo.h"
+#include "platform/Environment.h"
 
 #include "ServiceBroker.h"
 #include "cores/DataCacheCore.h"
@@ -753,6 +754,10 @@ float CProcessInfo::MaxTempoPlatform()
 
 bool CProcessInfo::IsTempoAllowed(float tempo)
 {
+  // GoFuse's controls use 0.5x..4x. Kodi's FFmpeg atempo path supports this
+  // range; the standalone application's narrower UI policy stays unchanged.
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1")
+    return tempo >= 0.5f && tempo <= 4.0f;
   if (tempo > MinTempoPlatform() &&
       (tempo < MaxTempoPlatform() ||
        tempo < CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_maxTempo + 0.05f))

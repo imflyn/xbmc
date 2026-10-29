@@ -437,6 +437,7 @@ bool CRenderManager::Flush(bool wait, bool saveBuffers)
 
     if (m_pRenderer)
     {
+      ++m_embedEpoch;
       m_overlays.Flush();
       m_debugRenderer.Flush();
 
@@ -920,6 +921,8 @@ bool CRenderManager::AddVideoPicture(const VideoPicture& picture, volatile std::
   m.presentfield = displayField;
   m.presentmethod = presentmethod;
   m.pts = picture.pts;
+  m.embedEpoch = m_embedEpoch;
+  m.embedSequence = ++m_embedSequence;
   m_queued.push_back(m_free.front());
   m_free.pop_front();
   m_playerPort->UpdateRenderBuffers(m_queued.size(), m_discard.size(), m_free.size());
@@ -1169,6 +1172,7 @@ void CRenderManager::PrepareNextRender()
 void CRenderManager::DiscardBuffer()
 {
   std::unique_lock lock2(m_presentlock);
+  ++m_embedEpoch;
 
   while(!m_queued.empty())
   {
@@ -1179,6 +1183,22 @@ void CRenderManager::DiscardBuffer()
   if(m_presentstep == PRESENT_READY)
     m_presentstep = PRESENT_IDLE;
   m_presentevent.notifyAll();
+}
+
+bool CRenderManager::GetEmbedFrame(EmbedFrame& frame)
+{
+  std::unique_lock lock(m_presentlock);
+  const auto& slot = m_Queue[m_presentsource];
+  if (!slot.embedSequence || slot.embedEpoch != m_embedEpoch || slot.pts == DVD_NOPTS_VALUE)
+    return false;
+  frame = {slot.embedEpoch, slot.embedSequence, slot.pts};
+  return true;
+}
+
+uint64_t CRenderManager::GetEmbedEpoch()
+{
+  std::unique_lock lock(m_presentlock);
+  return m_embedEpoch;
 }
 
 bool CRenderManager::GetStats(int &lateframes, double &pts, int &queued, int &discard)

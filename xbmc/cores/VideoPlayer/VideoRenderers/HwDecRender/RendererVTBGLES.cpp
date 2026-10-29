@@ -44,8 +44,19 @@ bool CRendererVTB::Register()
 
 CRendererVTB::CRendererVTB()
 {
-  auto winSystem = dynamic_cast<WIN_SYSTEM_CLASS*>(CServiceBroker::GetWinSystem());
-  m_glContext = winSystem->GetEAGLContextObj();
+  auto* base = CServiceBroker::GetWinSystem();
+  m_glContext = (CVEAGLContext)base->GetEmbeddedGLContext();
+  if (!m_glContext)
+  {
+    auto* winSystem = dynamic_cast<WIN_SYSTEM_CLASS*>(base);
+    if (winSystem)
+      m_glContext = winSystem->GetEAGLContextObj();
+  }
+  if (!m_glContext)
+  {
+    CLog::Log(LOGERROR, "CRendererVTB: no current EAGL render context");
+    return;
+  }
   CVReturn ret = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault,
                                               NULL,
                                               m_glContext,

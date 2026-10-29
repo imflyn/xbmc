@@ -204,6 +204,7 @@ struct SelectionStream
   StreamFlags flags = StreamFlags::FLAG_NONE;
   int source = 0;
   int id = 0;
+  int embedContainerId = -1;
   int64_t demuxerId = -1;
   std::string codec;
   std::string codecDesc;
@@ -320,6 +321,9 @@ public:
   void SetSubTitleDelay(float fValue = 0.0f) override;
   float GetSubTitleDelay() override;
   int GetSubtitleCount() const override;
+  bool GetEmbedSubtitleIdentity(int index, int& containerId, int& ffmpegIndex) const;
+  int GetEmbedSpeed() const { return m_embedSpeed.load(); }
+  float GetEmbedTempo() const { return m_embedTempo.load(); }
   int GetSubtitle() override;
   void GetSubtitleStreamInfo(int index, SubtitleStreamInfo& info) const override;
   void SetSubtitle(int iStream) override;
@@ -401,6 +405,9 @@ public:
 
   int OnDiscNavResult(void* pData, int iMessage) override;
   void GetVideoResolution(unsigned int &width, unsigned int &height) override;
+  bool GetEmbedFrame(CRenderManager::EmbedFrame& frame) { return m_renderManager.GetEmbedFrame(frame); }
+  uint64_t GetEmbedEpoch() { return m_renderManager.GetEmbedEpoch(); }
+  void SetEmbedBitmapStyle(float scale, float position) { m_renderManager.SetEmbedBitmapStyle(scale, position); }
 
   CVideoSettings GetVideoSettings() const override;
   void SetVideoSettings(CVideoSettings& settings) override;
@@ -614,6 +621,8 @@ protected:
   } m_content;
 
   int m_playSpeed;
+  std::atomic<int> m_embedSpeed{1000};
+  std::atomic<float> m_embedTempo{1.0f};
   int m_streamPlayerSpeed;
   int m_demuxerSpeed = DVD_PLAYSPEED_NORMAL;
   struct SSpeedState

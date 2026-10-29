@@ -44,6 +44,7 @@ public:
   bool fullscreen; /* player is allowed to switch to fullscreen */
   bool videoOnly; /* player is not allowed to play audio streams, video streams only */
   bool preferStereo; /* prefer stereo streams when selecting initial audio stream*/
+  bool embeddedStartPaused{false}; /* embed preparation must not start audio */
 };
 
 class CFileItem;

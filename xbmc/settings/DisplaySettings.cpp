@@ -263,6 +263,10 @@ bool CDisplaySettings::OnSettingChanging(const std::shared_ptr<const CSetting>& 
 {
   if (!setting)
     return false;
+  // Embedded hosts choose their initial geometry before creating a WinSystem.
+  // No running display exists yet to resize or show a confirmation dialog.
+  if (!CServiceBroker::GetWinSystem())
+    return true;
 
   const std::string &settingId = setting->GetId();
   if (settingId == CSettings::SETTING_VIDEOSCREEN_RESOLUTION ||

@@ -7,6 +7,7 @@
  */
 
 #include "PlatformAndroid.h"
+#include "platform/Environment.h"
 
 #include "ServiceBroker.h"
 #include "filesystem/SpecialProtocol.h"
@@ -40,7 +41,8 @@ bool CPlatformAndroid::InitStageOne()
 
   CWinSystemAndroidGLESContext::Register();
 
-  CAndroidPowerSyscall::Register();
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") != "1")
+    CAndroidPowerSyscall::Register();
 
   return true;
 }
@@ -49,6 +51,8 @@ bool CPlatformAndroid::InitStageThree()
 {
   if (!CPlatformPosix::InitStageThree())
     return false;
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1")
+    return true;
 
   if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiVideoLayoutTransparent)
   {

@@ -456,7 +456,9 @@ bool CApplication::CreateGUI()
 
   // Retrieve the matching resolution based on GUI settings
   bool sav_res = false;
-  CDisplaySettings::GetInstance().SetCurrentResolution(CDisplaySettings::GetInstance().GetDisplayResolution());
+  CDisplaySettings::GetInstance().SetCurrentResolution(
+      CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1"
+          ? RES_WINDOW : CDisplaySettings::GetInstance().GetDisplayResolution());
   CLog::Log(LOGINFO, "Checking resolution {}",
             CDisplaySettings::GetInstance().GetCurrentResolution());
   if (!CServiceBroker::GetWinSystem()->GetGfxContext().IsValidResolution(CDisplaySettings::GetInstance().GetCurrentResolution()))
@@ -1632,7 +1634,7 @@ bool CApplication::Stop(int exitCode)
 #if defined(TARGET_ANDROID)
   // Note: On Android, the app must be stopped asynchronously, once Android has
   // signalled that the app shall be destroyed. See android_main() implementation.
-  if (!CXBMCApp::Get().Stop(exitCode))
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") != "1" && !CXBMCApp::Get().Stop(exitCode))
     return false;
 #endif
 

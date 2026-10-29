@@ -12,6 +12,7 @@
 #include "DVDDemuxers/DVDDemux.h"
 #include "DVDDemuxers/DVDDemuxCC.h"
 #include "DVDDemuxers/DVDDemuxFFmpeg.h"
+#include "platform/Environment.h"
 #include "DVDDemuxers/DVDDemuxUtils.h"
 #include "DVDDemuxers/DVDDemuxVobsub.h"
 #include "DVDDemuxers/DVDFactoryDemuxer.h"
@@ -663,6 +664,10 @@ void CSelectionStreams::Update(const std::shared_ptr<CDVDInputStream>& input,
       s.source   = source;
       s.type     = stream->type;
       s.id       = stream->uniqueId;
+      // The FFmpeg AVStream ID is a container identity, unlike Kodi's random
+      // demuxer instance ID. Preserve it when copying the immutable catalog.
+      if (dynamic_cast<CDVDDemuxFFmpeg*>(demuxer) && stream->pPrivate)
+        s.embedContainerId = static_cast<const AVStream*>(stream->pPrivate)->id;
       s.demuxerId = stream->demuxerId;
       s.language = stream->language;
       s.flags    = stream->flags;
@@ -1426,8 +1431,17 @@ void CVideoPlayer::Prepare()
   ForgetSubtitleSelection();
 
   CFFmpegLog::SetLogLevel(1);
-  SetPlaySpeed(DVD_PLAYSPEED_NORMAL);
-  m_processInfo->SetSpeed(1.0);
+  if (m_playerOptions.embeddedStartPaused)
+  {
+    m_playSpeed = m_streamPlayerSpeed = DVD_PLAYSPEED_PAUSE;
+    m_embedSpeed = DVD_PLAYSPEED_PAUSE;
+    m_processInfo->SetSpeed(0.0);
+  }
+  else
+  {
+    SetPlaySpeed(DVD_PLAYSPEED_NORMAL);
+    m_processInfo->SetSpeed(1.0);
+  }
   m_processInfo->SetTempo(1.0);
   m_processInfo->SetFrameAdvance(false);
   m_State.Clear();
@@ -3476,6 +3490,19 @@ void CVideoPlayer::HandleMessages()
       const auto msg = std::static_pointer_cast<CDVDMsgPlayerSetSpeed>(pMsg);
       const int speed = msg->GetSpeed();
 
+      // GoFuse changes tempo independently from its explicit playing intent.
+      // Consume a paused tempo update without advancing clocks or audio. A
+      // resume has already changed GetNewSpeed(), so takes the normal path.
+      if (msg->IsTempo() && m_playSpeed == DVD_PLAYSPEED_PAUSE &&
+          m_processInfo->GetNewSpeed() == 0.0f &&
+          CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1")
+      {
+        const float tempo = static_cast<float>(speed) / DVD_PLAYSPEED_NORMAL;
+        m_processInfo->SetTempo(tempo);
+        m_embedTempo = tempo;
+        continue;
+      }
+
       // correct our current clock, as it would start going wrong otherwise
       if (m_State.timestamp > 0)
       {
@@ -3540,7 +3567,10 @@ void CVideoPlayer::HandleMessages()
       }
 
       if (isTempoSpeed)
+      {
         m_processInfo->SetTempo(static_cast<float>(speed) / DVD_PLAYSPEED_NORMAL);
+        m_embedTempo = static_cast<float>(speed) / DVD_PLAYSPEED_NORMAL;
+      }
       else
         m_processInfo->SetSpeed(static_cast<float>(speed) / DVD_PLAYSPEED_NORMAL);
 
@@ -3553,6 +3583,7 @@ void CVideoPlayer::HandleMessages()
       m_VideoPlayerAudio->SetSpeed(speed);
       m_VideoPlayerVideo->SetSpeed(speed);
       m_streamPlayerSpeed = speed;
+      m_embedSpeed = speed; // after the actual clocks/stream commands above
     }
     else if (pMsg->IsType(CDVDMsg::PLAYER_FRAME_ADVANCE))
     {
@@ -3703,6 +3734,7 @@ void CVideoPlayer::SetPlaySpeed(int speed)
   {
     m_playSpeed = speed;
     m_streamPlayerSpeed = speed;
+    m_embedSpeed = speed;
   }
 }
 
@@ -6441,6 +6473,17 @@ void CVideoPlayer::GetSubtitleStreamInfo(int index, SubtitleStreamInfo& info) co
   info.flags = s.flags;
   info.isExternal = STREAM_SOURCE_MASK(s.source) == STREAM_SOURCE_DEMUX_SUB ||
                     STREAM_SOURCE_MASK(s.source) == STREAM_SOURCE_TEXT;
+}
+
+bool CVideoPlayer::GetEmbedSubtitleIdentity(int index, int& containerId, int& ffmpegIndex) const
+{
+  std::unique_lock lock(m_content.m_section);
+  if (index < 0 || index >= m_content.m_selectionStreams.CountType(StreamType::SUBTITLE))
+    return false;
+  const auto& stream = m_content.m_selectionStreams.Get(StreamType::SUBTITLE, index);
+  containerId = stream.embedContainerId;
+  ffmpegIndex = stream.id;
+  return true;
 }
 
 void CVideoPlayer::SetSubtitle(int iStream)

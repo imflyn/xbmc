@@ -587,6 +587,12 @@ void CUtil::RunShortcut(const char* szShortcutPath)
 
 std::string CUtil::GetHomePath(const std::string& strTarget)
 {
+  if (strTarget == "KODI_HOME" || strTarget == "KODI_BIN_HOME")
+  {
+    const auto embedResources = CEnvironment::getenv("GOFUSE_KODI_RESOURCES");
+    if (!embedResources.empty())
+      return embedResources;
+  }
   auto strPath = CEnvironment::getenv(strTarget);
 
   return ::GetHomePath(strTarget, strPath);

@@ -7,6 +7,7 @@
  */
 
 #include "NetworkServices.h"
+#include "platform/Environment.h"
 
 #include "ServiceBroker.h"
 #include "dialogs/GUIDialogKaiToast.h"
@@ -535,6 +536,10 @@ bool CNetworkServices::OnSettingUpdate(const std::shared_ptr<CSetting>& setting,
 
 void CNetworkServices::Start()
 {
+  // Embedded playback needs outbound media I/O, not Kodi's RPC/UDP/discovery
+  // servers. The existing GoFuse IPC and protected proxy remain authoritative.
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1")
+    return;
   StartZeroconf();
   if (m_settings->GetBool(CSettings::SETTING_SERVICES_UPNP))
     StartUPnP();

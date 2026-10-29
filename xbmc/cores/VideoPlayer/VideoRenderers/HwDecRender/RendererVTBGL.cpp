@@ -171,8 +171,16 @@ bool CRendererVTB::UploadTexture(int index)
 
   // It is the fastest way to render a CVPixelBuffer backed
   // with an IOSurface as there is no CPU -> GPU upload.
-  CWinSystemOSX* winSystem = dynamic_cast<CWinSystemOSX*>(CServiceBroker::GetWinSystem());
-  CGLContextObj cgl_ctx  = (CGLContextObj)winSystem->GetCGLContextObj();
+  auto* base = CServiceBroker::GetWinSystem();
+  CGLContextObj cgl_ctx = (CGLContextObj)base->GetEmbeddedGLContext();
+  if (!cgl_ctx)
+  {
+    auto* winSystem = dynamic_cast<CWinSystemOSX*>(base);
+    if (winSystem)
+      cgl_ctx = (CGLContextObj)winSystem->GetCGLContextObj();
+  }
+  if (!cgl_ctx)
+    return false;
   IOSurfaceRef surface = nullptr;
   if (!IsSupportedVTBGLSurface(cvBufferRef, surface))
   {

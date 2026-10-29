@@ -53,6 +53,8 @@ bool CFrameBufferObject::Initialize()
 
 void CFrameBufferObject::Cleanup()
 {
+  if (m_rendering)
+    EndRender();
   if (!IsValid())
     return;
 
@@ -91,12 +93,14 @@ bool CFrameBufferObject::CreateAndBindToTexture(GLenum target, int width, int he
   VerifyGLState();
 
   m_bound = false;
+  GLint previousFramebuffer = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
   glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
   glBindTexture(target, m_texid);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, m_texid, 0);
   VerifyGLState();
   GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
   if (status != GL_FRAMEBUFFER_COMPLETE)
   {
     VerifyGLState();
@@ -119,10 +123,12 @@ bool CFrameBufferObject::AttachDepthBuffer(int width, int height)
   glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
   glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
+  GLint previousFramebuffer = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
   glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
   const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
 
   if (status != GL_FRAMEBUFFER_COMPLETE)
   {
@@ -143,9 +149,11 @@ void CFrameBufferObject::SetFiltering(GLenum target, GLenum mode)
 // Begin rendering to FBO
 bool CFrameBufferObject::BeginRender()
 {
-  if (IsValid() && IsBound())
+  if (IsValid() && IsBound() && !m_rendering)
   {
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &m_previousFramebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+    m_rendering = true;
     return true;
   }
   return false;
@@ -154,6 +162,9 @@ bool CFrameBufferObject::BeginRender()
 // Finish rendering to FBO
 void CFrameBufferObject::EndRender() const
 {
-  if (IsValid())
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  if (IsValid() && m_rendering)
+  {
+    glBindFramebuffer(GL_FRAMEBUFFER, m_previousFramebuffer);
+    m_rendering = false;
+  }
 }

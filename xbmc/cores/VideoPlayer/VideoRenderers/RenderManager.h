@@ -73,6 +73,11 @@ public:
   float GetAspectRatio() const;
   unsigned int GetOrientation() const;
   void FrameMove();
+  // Provenance from the actual presentation slot, not a late clock snapshot.
+  struct EmbedFrame { uint64_t epoch{}, sequence{}; double pts{}; };
+  bool GetEmbedFrame(EmbedFrame& frame);
+  uint64_t GetEmbedEpoch();
+  void SetEmbedBitmapStyle(float scale, float position) { m_overlays.SetEmbedBitmapStyle(scale, position); }
   void FrameWait(std::chrono::milliseconds duration);
   void Render(bool clear, DWORD flags = 0, DWORD alpha = 255, bool gui = true);
 
@@ -214,10 +219,12 @@ protected:
 
   struct SPresent
   {
+    uint64_t embedEpoch{}, embedSequence{};
     double         pts;
     EFIELDSYNC     presentfield;
     EPRESENTMETHOD presentmethod;
   } m_Queue[NUM_BUFFERS]{};
+  uint64_t m_embedEpoch{1}, m_embedSequence{};
 
   std::deque<int> m_free;
   std::deque<int> m_queued;

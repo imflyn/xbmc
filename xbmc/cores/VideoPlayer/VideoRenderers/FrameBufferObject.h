@@ -71,6 +71,8 @@ public:
 
 private:
   GLuint m_fbo = 0;
+  GLint m_previousFramebuffer = 0;
+  mutable bool m_rendering = false;
   bool   m_valid;
   bool   m_bound;
   bool   m_supported;

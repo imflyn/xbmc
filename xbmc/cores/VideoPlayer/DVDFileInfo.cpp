@@ -95,11 +95,13 @@ int DegreeToOrientation(int degrees)
 namespace
 {
 //! Convert a decoded picture to a BGRA texture sized for the thumbnail cache.
-std::unique_ptr<CTexture> PictureToTexture(const VideoPicture& picture, const CDVDStreamInfo& hint)
+std::unique_ptr<CTexture> PictureToTexture(const VideoPicture& picture, const CDVDStreamInfo& hint,
+                                         unsigned int maximumWidth = 0)
 {
   const unsigned int nWidth =
       std::min(picture.iDisplayWidth,
-               CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_imageRes);
+               maximumWidth ? maximumWidth :
+                 CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_imageRes);
   double aspect =
       static_cast<double>(picture.iDisplayWidth) / static_cast<double>(picture.iDisplayHeight);
   if (hint.forced_aspect && hint.aspect != 0)
@@ -207,7 +209,10 @@ std::unique_ptr<CTexture> PictureToTexture(const VideoPicture& picture, const CD
 } // namespace
 
 std::unique_ptr<CTexture> CDVDFileInfo::ExtractThumbToTexture(const CFileItem& fileItem,
-                                                              int chapterNumber)
+                                                              int chapterNumber,
+                                                              int64_t positionMs,
+                                                              unsigned int maximumWidth,
+                                                              int64_t* decodedPTS)
 {
   if (!CanExtract(fileItem))
     return {};
@@ -227,12 +232,17 @@ std::unique_ptr<CTexture> CDVDFileInfo::ExtractThumbToTexture(const CFileItem& f
   const int nTotalLen = session->demuxer->GetStreamLength();
   const bool seekToChapter = chapterNumber > 0 && session->demuxer->GetChapterCount() > 0;
   const int64_t nSeekTo =
-      seekToChapter ? session->demuxer->GetChapterPos(chapterNumber).count() : nTotalLen / 3;
+      positionMs >= 0 ? positionMs :
+        (seekToChapter ? session->demuxer->GetChapterPos(chapterNumber).count() : nTotalLen / 3);
 
   VideoPicture picture = {};
   if (SeekAndDecodePictureAt(*session->demuxer, *session->codec, session->videoStream, nSeekTo,
                              redactPath, picture, packetsTried))
-    result = PictureToTexture(picture, session->hint);
+  {
+    result = PictureToTexture(picture, session->hint, maximumWidth);
+    if (decodedPTS) *decodedPTS = picture.pts == DVD_NOPTS_VALUE ? -1 :
+      static_cast<int64_t>(picture.pts / 1000.0);
+  }
   else
     CLog::LogF(LOGDEBUG, "decode failed in {} after {} packets.", redactPath, packetsTried);
 
