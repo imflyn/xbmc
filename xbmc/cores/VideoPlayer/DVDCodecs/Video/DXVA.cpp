@@ -19,6 +19,7 @@
 #include "cores/VideoPlayer/DVDCodecs/DVDFactoryCodec.h"
 #include "cores/VideoPlayer/Process/ProcessInfo.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderManager.h"
+#include "platform/Environment.h"
 #include "rendering/dx/DeviceResources.h"
 #include "rendering/dx/RenderContext.h"
 #include "settings/AdvancedSettings.h"
@@ -306,6 +307,22 @@ bool CContext::CreateContext()
   ComPtr<ID3D11DeviceContext> pD3DDeviceContext;
 
   m_sharingAllowed = DX::DeviceResources::Get()->IsNV12SharedTexturesSupported();
+  // Reuse Kodi's existing single-device DXVA path for the Arc Pro 140T, where
+  // frequent creation of isolated decoder devices retains substantial GPU
+  // shared memory. Keep other adapters on Kodi's normal path. An explicit
+  // environment override makes this behavior reversible without a new binary.
+  const std::string singleDeviceOverride = CEnvironment::getenv("GOFUSE_KODI_SINGLE_D3D_DEVICE");
+  const auto adapterDesc = DX::DeviceResources::Get()->GetAdapterDesc();
+  const bool isValidatedArc = adapterDesc.VendorId == 0x8086 /* Intel PCI vendor */ &&
+                              std::wstring(adapterDesc.Description).find(L"Arc(TM) Pro 140T") != std::wstring::npos;
+  const bool singleDevice = CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1" &&
+                            (singleDeviceOverride == "1" ||
+                             (singleDeviceOverride != "0" && isValidatedArc));
+  if (singleDevice)
+  {
+    m_sharingAllowed = false;
+    CLog::Log(LOGINFO, "GoFuse DXVA: using one D3D11 device for decode and presentation.");
+  }
 
   if (m_sharingAllowed)
   {
