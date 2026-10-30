@@ -838,14 +838,16 @@ AC_SUBST(app_rendersystem)
 AC_SUBST(ffmpeg_options)
 
 [
-if test "x$CCACHE" = "x"
-then
-  MESON_CC="'$CC'"
-  MESON_CXX="'$CXX'"
-else
-  MESON_CC="['$CCACHE', '$CC']"
-  MESON_CXX="['$CCACHE', '$CXX']"
-fi
+MESON_CC=""
+for argument in $CCACHE $CC; do
+  MESON_CC="${MESON_CC:+${MESON_CC}, }'$argument'"
+done
+MESON_CC="[$MESON_CC]"
+MESON_CXX=""
+for argument in $CCACHE $CXX; do
+  MESON_CXX="${MESON_CXX:+${MESON_CXX}, }'$argument'"
+done
+MESON_CXX="[$MESON_CXX]"
 
 # Parse and handle CFLAGS
 read -r CFLAGS_ARRAY << EOF

@@ -322,7 +322,9 @@ public:
   void SetSubTitleDelay(float fValue = 0.0f) override;
   float GetSubTitleDelay() override;
   int GetSubtitleCount() const override;
-  bool GetEmbedSubtitleIdentity(int index, int& containerId, int& ffmpegIndex) const;
+  bool GetEmbedSubtitleIdentity(int index, int& containerId, int& ffmpegIndex,
+                                std::string* sourcePath = nullptr) const;
+  void SetEmbedExplicitSeekPending(bool pending) { m_embedExplicitSeekPending.store(pending); }
   int GetEmbedSpeed() const { return m_embedSpeed.load(); }
   float GetEmbedTempo() const { return m_embedTempo.load(); }
   int GetSubtitle() override;
@@ -408,6 +410,14 @@ public:
   void GetVideoResolution(unsigned int &width, unsigned int &height) override;
   bool GetEmbedFrame(CRenderManager::EmbedFrame& frame) { return m_renderManager.GetEmbedFrame(frame); }
   uint64_t GetEmbedEpoch() { return m_renderManager.GetEmbedEpoch(); }
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  double GetEmbedClock() { return m_clock.GetClock(); }
+  void SetEmbedExternalOutput(bool enabled) { m_renderManager.SetEmbedExternalOutput(enabled); }
+  bool TakeEmbedPicture(VideoPicture& picture, CRenderManager::EmbedFrame& frame,
+                       std::vector<CRenderManager::EmbedOverlay>& overlays) {
+    return m_renderManager.TakeEmbedPicture(picture, frame, overlays);
+  }
+#endif
   void SetEmbedBitmapStyle(float scale, float position) { m_renderManager.SetEmbedBitmapStyle(scale, position); }
 
   CVideoSettings GetVideoSettings() const override;
@@ -625,6 +635,7 @@ protected:
   } m_content;
 
   int m_playSpeed;
+  std::atomic<bool> m_embedExplicitSeekPending{false};
   std::atomic<int> m_embedSpeed{1000};
   std::atomic<float> m_embedTempo{1.0f};
   int m_streamPlayerSpeed;

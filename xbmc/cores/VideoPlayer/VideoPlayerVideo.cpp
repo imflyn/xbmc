@@ -915,7 +915,11 @@ CVideoPlayerVideo::EOutputState CVideoPlayerVideo::OutputPicture(const VideoPict
   int orientation = sorient != 0 ? (sorient + m_hints.orientation) % 360
                                  : m_hints.orientation;
 
-  if (!m_renderManager.Configure(*pPicture,
+  if (
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+      !m_renderManager.HasEmbedExternalOutput() &&
+#endif
+      !m_renderManager.Configure(*pPicture,
                                 static_cast<float>(config_framerate),
                                 orientation,
                                 m_pVideoCodec->GetAllowedReferences()))
@@ -966,6 +970,21 @@ CVideoPlayerVideo::EOutputState CVideoPlayerVideo::OutputPicture(const VideoPict
     CLog::Log(LOGDEBUG, "{} - dropped in output", __FUNCTION__);
     return OUTPUT_DROPPED;
   }
+
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  if (m_renderManager.HasEmbedExternalOutput())
+  {
+    // Leave priority messages (seek/pause/flush) runnable while pacing on Kodi's clock.
+    if (m_syncState == IDVDStreamPlayer::SYNC_INSYNC && m_speed > 0 &&
+        pPicture->pts - iPlayingClock > DVD_MSEC_TO_TIME(40))
+    {
+      CThread::Sleep(5ms);
+      return OUTPUT_AGAIN;
+    }
+    ProcessOverlays(pPicture, pPicture->pts);
+    return m_renderManager.SubmitEmbedPicture(*pPicture) ? OUTPUT_NORMAL : OUTPUT_AGAIN;
+  }
+#endif
 
   auto timeToDisplay = std::chrono::milliseconds(DVD_TIME_TO_MSEC(pPicture->pts - iPlayingClock));
 

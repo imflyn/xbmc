@@ -419,6 +419,12 @@ void CRenderManager::UnInit()
 
 bool CRenderManager::Flush(bool wait, bool saveBuffers)
 {
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  if (m_embedExternal) {
+    DiscardBuffer();
+    return true;
+  }
+#endif
   if (!m_pRenderer)
     return true;
 
@@ -958,6 +964,15 @@ bool CRenderManager::AddVideoPicture(const VideoPicture& picture, volatile std::
 
 void CRenderManager::AddOverlay(std::shared_ptr<CDVDOverlay> o, double pts)
 {
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  {
+    std::unique_lock lock(m_presentlock);
+    if (m_embedExternal) {
+      m_embedPendingOverlays.push_back({std::move(o), pts});
+      return;
+    }
+  }
+#endif
   int idx;
   {
     std::unique_lock lock(m_presentlock);
@@ -1185,6 +1200,11 @@ void CRenderManager::DiscardBuffer()
 {
   std::unique_lock lock2(m_presentlock);
   ++m_embedEpoch;
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  m_embedPicture.reset();
+  m_embedPendingOverlays.clear();
+  m_embedPictureOverlays.clear();
+#endif
 
   while(!m_queued.empty())
   {
@@ -1196,6 +1216,46 @@ void CRenderManager::DiscardBuffer()
     m_presentstep = PRESENT_IDLE;
   m_presentevent.notifyAll();
 }
+
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+void CRenderManager::SetEmbedExternalOutput(bool enabled)
+{
+  std::unique_lock lock(m_presentlock);
+  if (m_embedExternal.exchange(enabled) == enabled)
+    return;
+  DiscardBuffer();
+  m_embedPicture.reset();
+  m_embedPendingOverlays.clear();
+  m_embedPictureOverlays.clear();
+  m_presentevent.notifyAll();
+}
+
+bool CRenderManager::SubmitEmbedPicture(const VideoPicture& picture)
+{
+  std::unique_lock lock(m_presentlock);
+  if (!m_embedExternal)
+    return false;
+  m_embedPicture = std::make_unique<VideoPicture>();
+  m_embedPicture->CopyRef(picture);
+  m_embedPictureFrame = {m_embedEpoch, ++m_embedSequence, picture.pts};
+  m_embedPictureOverlays = std::move(m_embedPendingOverlays);
+  m_embedPendingOverlays.clear();
+  return true;
+}
+
+bool CRenderManager::TakeEmbedPicture(VideoPicture& picture, EmbedFrame& frame,
+                                      std::vector<EmbedOverlay>& overlays)
+{
+  std::unique_lock lock(m_presentlock);
+  if (!m_embedExternal || !m_embedPicture || m_embedPictureFrame.epoch != m_embedEpoch)
+    return false;
+  picture.CopyRef(*m_embedPicture);
+  frame = m_embedPictureFrame;
+  overlays = std::move(m_embedPictureOverlays);
+  m_embedPicture.reset();
+  return true;
+}
+#endif
 
 bool CRenderManager::GetEmbedFrame(EmbedFrame& frame)
 {

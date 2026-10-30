@@ -28,7 +28,7 @@ endif
 
 # configuration settings
 CONFIGURE=cp -f $(CONFIG_SUB) $(CONFIG_GUESS) .; \
-          ./configure --prefix=$(PREFIX) --disable-shared $(ABI) $(CONFIGURE_FLAGS)
+          CFLAGS="$(CFLAGS) -std=gnu17" ./configure --prefix=$(PREFIX) --disable-shared $(ABI) $(CONFIGURE_FLAGS)
 
 
 LIBDYLIB=$(PLATFORM)/.libs/lib$(LIBNAME).a

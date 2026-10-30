@@ -11,7 +11,11 @@ if(NOT TARGET ${APP_NAME_LC}::${CMAKE_FIND_PACKAGE_NAME})
 
   find_path(SHAIRPLAY_INCLUDE_DIR shairplay/raop.h
                                   HINTS ${DEPENDS_PATH}/include)
-  find_library(SHAIRPLAY_LIBRARY NAMES shairplay libshairplay
+  set(_shairplay_names shairplay libshairplay)
+  if(CORE_SYSTEM_NAME STREQUAL darwin_embedded)
+    list(PREPEND _shairplay_names libshairplay.a)
+  endif()
+  find_library(SHAIRPLAY_LIBRARY NAMES ${_shairplay_names}
                                  HINTS ${DEPENDS_PATH}/lib)
 
   if(NOT VERBOSE_FIND)

@@ -77,6 +77,14 @@ public:
   struct EmbedFrame { uint64_t epoch{}, sequence{}; double pts{}; };
   bool GetEmbedFrame(EmbedFrame& frame);
   uint64_t GetEmbedEpoch();
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  struct EmbedOverlay { std::shared_ptr<CDVDOverlay> overlay; double pts; };
+  void SetEmbedExternalOutput(bool enabled);
+  bool HasEmbedExternalOutput() const { return m_embedExternal.load(); }
+  bool SubmitEmbedPicture(const VideoPicture& picture);
+  bool TakeEmbedPicture(VideoPicture& picture, EmbedFrame& frame,
+                        std::vector<EmbedOverlay>& overlays);
+#endif
   void SetEmbedBitmapStyle(float scale, float position) { m_overlays.SetEmbedBitmapStyle(scale, position); }
   void FrameWait(std::chrono::milliseconds duration);
   void Render(bool clear, DWORD flags = 0, DWORD alpha = 255, bool gui = true);
@@ -168,6 +176,12 @@ protected:
   void UpdateLatencyTweak();
   void CheckEnableClockSync();
 
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  std::atomic_bool m_embedExternal{false};
+  std::unique_ptr<VideoPicture> m_embedPicture;
+  EmbedFrame m_embedPictureFrame;
+  std::vector<EmbedOverlay> m_embedPendingOverlays, m_embedPictureOverlays;
+#endif
   CBaseRenderer *m_pRenderer = nullptr;
   //! Owns the video tap's private FBO; render-thread only, reset in UnInit
   std::unique_ptr<KODI::RENDERING::CAPTURE::CCaptureBlit> m_captureBlit;
