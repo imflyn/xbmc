@@ -1614,6 +1614,12 @@ void CVideoPlayer::Prepare()
 
   UpdatePlayState(0);
 
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  // Start once the decoders are synchronized; fill the read-ahead queue while playing.
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1")
+    SetCaching(CACHESTATE_INIT);
+  else
+#endif
   SetCaching(CACHESTATE_FLUSH);
 }
 
@@ -4168,29 +4174,6 @@ void CVideoPlayer::ReopenSubtitleStream(const SelectionStream& stream)
   CloseStream(m_CurrentSubtitle, false);
   const bool opened{OpenStream(m_CurrentSubtitle, stream.demuxerId, stream.id, stream.source)};
 
-#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
-  // For embedded subtitles the demuxer is ahead of playback (AV buffers
-  // are full), so the subtitle packets for the current playback time have
-  // already been read and discarded. Seek back to the current time so they
-  // get re-read, mirroring what audio stream switching does.
-  // A seek already queued re-reads them as well and must not be overridden.
-  if (opened && !m_embedExplicitSeekPending.load() &&
-      STREAM_SOURCE_MASK(stream.source) == STREAM_SOURCE_DEMUX &&
-      m_messenger.GetPacketCount(CDVDMsg::PLAYER_SEEK) == 0 &&
-      m_messenger.GetPacketCount(CDVDMsg::PLAYER_SEEK_CHAPTER) == 0)
-  {
-    CDVDMsgPlayerSeek::CMode mode;
-    // The public cache tracks the confirmed presentation position. The
-    // player state used by GetUpdatedTime can still describe the pre-seek
-    // clock while the first frame at a paused seek target is already shown.
-    mode.time = static_cast<double>(CServiceBroker::GetDataCacheCore().GetPlayTime());
-    mode.backward = true;
-    mode.accurate = true;
-    mode.trickplay = true;
-    mode.sync = true;
-    m_messenger.Put(std::make_shared<CDVDMsgPlayerSeek>(mode));
-  }
-#else
   if (opened && CacheSubtitlePackets() &&
       STREAM_SOURCE_MASK(stream.source) == STREAM_SOURCE_DEMUX)
   {
@@ -4208,7 +4191,6 @@ void CVideoPlayer::ReopenSubtitleStream(const SelectionStream& stream)
     CLog::Log(LOGINFO, "GoFuse: subtitle switch without AV seek, stream {}, replayed {} packets",
               stream.id, replayed);
   }
-#endif
 }
 
 void CVideoPlayer::SetSubtitleVerticalPosition(int value, bool save)
