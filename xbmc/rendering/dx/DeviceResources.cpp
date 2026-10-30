@@ -11,6 +11,7 @@
 #include "DirectXHelper.h"
 #include "RenderContext.h"
 #include "ServiceBroker.h"
+#include "platform/Environment.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
 #include "messaging/ApplicationMessenger.h"
@@ -638,7 +639,11 @@ void DX::DeviceResources::ResizeBuffers()
   }
   else // Otherwise, create a new one using the same adapter as the existing Direct3D device.
   {
-    HDR_STATUS hdrStatus = CWIN32Util::GetWindowsHDRStatus();
+    // Flutter external textures accept BGRA8 SDR only. HDR is permitted only
+    // for the visible native presentation path, never the hidden texture sink.
+    const bool embeddedSDR = CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1" &&
+                             CEnvironment::getenv("GOFUSE_KODI_DIRECT_HDR") != "1";
+    HDR_STATUS hdrStatus = embeddedSDR ? HDR_STATUS::HDR_UNSUPPORTED : CWIN32Util::GetWindowsHDRStatus();
     const bool isHdrEnabled = (hdrStatus == HDR_STATUS::HDR_ON);
     bool use10bit = (hdrStatus != HDR_STATUS::HDR_UNSUPPORTED);
 
@@ -656,7 +661,7 @@ void DX::DeviceResources::ResizeBuffers()
 
     if (use10bitSetting == 1)
       use10bit = false;
-    else if (use10bitSetting == 2)
+    else if (use10bitSetting == 2 && !embeddedSDR)
       use10bit = true;
 
     DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};

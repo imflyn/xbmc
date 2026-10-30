@@ -11,6 +11,7 @@
 #include "DVDCodecs/Video/DVDVideoCodec.h"
 #include "DVDCodecs/Video/DXVA.h"
 #include "ServiceBroker.h"
+#include "platform/Environment.h"
 #include "VideoRenderers/BaseRenderer.h"
 #include "VideoRenderers/RenderFlags.h"
 #include "cores/VideoPlayer/Buffers/VideoBuffer.h"
@@ -233,7 +234,10 @@ bool CRendererBase::Configure(const VideoPicture& picture, float fps, unsigned o
   m_lastHdr10 = {};
   m_HdrType = HDR_TYPE::HDR_INVALID;
   m_useHLGtoPQ = false;
-  m_AutoSwitchHDR = DX::Windowing()->IsHDRDisplaySettingEnabled();
+  // The embedding owns output mode. Never change the user's Windows HDR
+  // setting while rendering into Flutter's SDR texture (or on teardown).
+  m_AutoSwitchHDR = CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") != "1" &&
+                    DX::Windowing()->IsHDRDisplaySettingEnabled();
   // enumerates the HDMI display modes, too slow for every frame
   m_canRenderDolbyVision = CanRenderDolbyVision();
 
@@ -529,6 +533,11 @@ void CRendererBase::CheckVideoParameters()
 {
   CRenderBuffer* buf = m_renderBuffers[m_iBufferIndex];
   ETONEMAPMETHOD method = m_videoSettings.m_ToneMapMethod;
+  // Embedded playback has no Kodi skin/OSD to enable tone mapping. The stock
+  // default is OFF, which leaves HDR10 looking washed out on the SDR texture.
+  if (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1" &&
+      !DX::Windowing()->IsHDROutput() && method == VS_TONEMAPMETHOD_OFF)
+    method = VS_TONEMAPMETHOD_HABLE;
 
   bool isHDRPQ = (buf->color_transfer == AVCOL_TRC_SMPTE2084 && buf->primaries == AVCOL_PRI_BT2020);
 
@@ -920,7 +929,9 @@ bool CRendererBase::IntendToRenderAsHDR(const VideoPicture& picture)
   const bool streamIsHDR = IsHdrStream(picture, CanRenderDolbyVision());
 
   const bool canDisplayHDR =
-      DX::Windowing()->IsHDROutput() || DX::Windowing()->IsHDRDisplaySettingEnabled();
+      DX::Windowing()->IsHDROutput() ||
+      (CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") != "1" &&
+       DX::Windowing()->IsHDRDisplaySettingEnabled());
 
   return streamIsHDR && canDisplayHDR;
 }

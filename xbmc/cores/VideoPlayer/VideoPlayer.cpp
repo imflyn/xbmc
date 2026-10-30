@@ -1048,6 +1048,7 @@ bool CVideoPlayer::OpenDemuxStream()
 
 void CVideoPlayer::CloseDemuxer()
 {
+  ClearSubtitlePackets();
   m_pDemuxer.reset();
   m_SelectionStreams.Clear(StreamType::NONE, STREAM_SOURCE_DEMUX);
 
@@ -1429,6 +1430,7 @@ void CVideoPlayer::Prepare()
   // A file opened in place reaches here without OnStartup, so the previous item's selection
   // must be forgotten before its streams open.
   ForgetSubtitleSelection();
+  ClearSubtitlePackets();
 
   CFFmpegLog::SetLogLevel(1);
   if (m_playerOptions.embeddedStartPaused)
@@ -1916,6 +1918,33 @@ bool CVideoPlayer::CheckIsCurrent(const CCurrentStream& current,
 
 void CVideoPlayer::ProcessPacket(CDemuxStream* pStream, DemuxPacket* pPacket)
 {
+  if (CacheSubtitlePackets() && pStream->type == StreamType::SUBTITLE &&
+      STREAM_SOURCE_MASK(pStream->source) == STREAM_SOURCE_DEMUX)
+  {
+    auto message = std::make_shared<CDVDMsgDemuxerPacket>(pPacket, false);
+    m_subtitlePackets.push_back({pStream->source, message});
+    m_subtitlePacketBytes += pPacket->iSize;
+    // Bound both payload and metadata. Retain two minutes behind the video
+    // clock as bitmap display sets can depend on earlier palette/object packets.
+    const double currentPts = m_VideoPlayerVideo->GetCurrentPts();
+    const double oldest = currentPts == DVD_NOPTS_VALUE
+                              ? std::numeric_limits<double>::lowest()
+                              : currentPts - DVD_SEC_TO_TIME(120);
+    while (!m_subtitlePackets.empty())
+    {
+      const auto* front = m_subtitlePackets.front().message->GetPacket();
+      const double end = front->pts + front->duration;
+      if (m_subtitlePacketBytes <= 32 * 1024 * 1024 && m_subtitlePackets.size() <= 8192 &&
+          (front->pts == DVD_NOPTS_VALUE || end >= oldest))
+        break;
+      m_subtitlePacketBytes -= front->iSize;
+      m_subtitlePackets.pop_front();
+    }
+    if (CheckIsCurrent(m_CurrentSubtitle, pStream, pPacket))
+      ProcessSubData(pStream, pPacket, std::move(message));
+    return;
+  }
+
   // process packet if it belongs to selected stream.
   // for dvd's don't allow automatic opening of streams*/
 
@@ -2018,7 +2047,8 @@ void CVideoPlayer::ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket)
     m_CurrentVideo.packets++;
 }
 
-void CVideoPlayer::ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket)
+void CVideoPlayer::ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket,
+                                  std::shared_ptr<CDVDMsgDemuxerPacket> message)
 {
   CheckStreamChanges(m_CurrentSubtitle, pStream);
 
@@ -2031,7 +2061,8 @@ void CVideoPlayer::ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket)
   if (CheckSceneSkip(m_CurrentSubtitle))
     drop = true;
 
-  m_VideoPlayerSubtitle->SendMessage(std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
+  m_VideoPlayerSubtitle->SendMessage(message ? std::move(message) :
+      std::make_shared<CDVDMsgDemuxerPacket>(pPacket, drop));
 
   if(m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_DVD))
     m_VideoPlayerSubtitle->UpdateOverlayInfo(std::static_pointer_cast<CDVDInputStreamNavigator>(m_pInputStream), LIBDVDNAV_BUTTON_NORMAL);
@@ -4097,6 +4128,10 @@ void CVideoPlayer::SetEnableStream(CCurrentStream& current, bool isEnabled)
   if (m_pDemuxer && STREAM_SOURCE_MASK(current.source) == STREAM_SOURCE_DEMUX &&
       m_SelectionStreams.Contains(current.type, current.source, current.demuxerId, current.id))
   {
+    // Hidden and previously selected subtitles must still be demuxed into the
+    // bounded packet history; only their decoder/render visibility changes.
+    if (!isEnabled && current.type == StreamType::SUBTITLE && CacheSubtitlePackets())
+      return;
     m_pDemuxer->EnableStream(current.demuxerId, current.id, isEnabled);
     current.demuxDisabled = !isEnabled;
   }
@@ -4112,27 +4147,39 @@ void CVideoPlayer::SetSubtitleVisibleInternal(bool bVisible)
   CServiceBroker::GetDataCacheCore().SignalSubtitleInfoChange();
 }
 
+bool CVideoPlayer::CacheSubtitlePackets() const
+{
+  return m_pInputStream && !m_pInputStream->IsStreamType(DVDSTREAM_TYPE_DVD) &&
+         !m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY);
+}
+
+void CVideoPlayer::ClearSubtitlePackets()
+{
+  m_subtitlePackets.clear();
+  m_subtitlePacketBytes = 0;
+}
+
 void CVideoPlayer::ReopenSubtitleStream(const SelectionStream& stream)
 {
   CloseStream(m_CurrentSubtitle, false);
   const bool opened{OpenStream(m_CurrentSubtitle, stream.demuxerId, stream.id, stream.source)};
 
-  // For embedded subtitles the demuxer is ahead of playback (AV buffers
-  // are full), so the subtitle packets for the current playback time have
-  // already been read and discarded. Seek back to the current time so they
-  // get re-read, mirroring what audio stream switching does.
-  // A seek already queued re-reads them as well and must not be overridden.
-  if (opened && STREAM_SOURCE_MASK(stream.source) == STREAM_SOURCE_DEMUX &&
-      m_messenger.GetPacketCount(CDVDMsg::PLAYER_SEEK) == 0 &&
-      m_messenger.GetPacketCount(CDVDMsg::PLAYER_SEEK_CHAPTER) == 0)
+  if (opened && CacheSubtitlePackets() &&
+      STREAM_SOURCE_MASK(stream.source) == STREAM_SOURCE_DEMUX)
   {
-    CDVDMsgPlayerSeek::CMode mode;
-    mode.time = static_cast<double>(GetUpdatedTime());
-    mode.backward = true;
-    mode.accurate = true;
-    mode.trickplay = true;
-    mode.sync = true;
-    m_messenger.Put(std::make_shared<CDVDMsgPlayerSeek>(mode));
+    size_t replayed = 0;
+    for (const auto& cached : m_subtitlePackets)
+    {
+      const auto* packet = cached.message->GetPacket();
+      if (cached.source == stream.source && packet->demuxerId == stream.demuxerId &&
+          packet->iStreamId == stream.id)
+      {
+        m_VideoPlayerSubtitle->SendMessage(cached.message);
+        ++replayed;
+      }
+    }
+    CLog::Log(LOGINFO, "GoFuse: subtitle switch without AV seek, stream {}, replayed {} packets",
+              stream.id, replayed);
   }
 }
 
@@ -4736,6 +4783,7 @@ bool CVideoPlayer::CloseStream(CCurrentStream& current, bool bWaitForBuffers)
 
 void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
 {
+  ClearSubtitlePackets();
   m_syncStartPtsWait.reset();
   CLog::Log(LOGDEBUG, "CVideoPlayer::FlushBuffers - flushing buffers");
 
@@ -6036,6 +6084,34 @@ void CVideoPlayer::SetVideoSettings(CVideoSettings& settings)
 void CVideoPlayer::FrameMove()
 {
   m_renderManager.FrameMove();
+  if (GetEmbedSpeed() == DVD_PLAYSPEED_PAUSE)
+  {
+    const double pts = m_VideoPlayerVideo->GetCurrentPts();
+    if (pts == DVD_NOPTS_VALUE)
+      return;
+    const double delay = m_VideoPlayerVideo->GetSubtitleDelay();
+    VecOverlays overlays;
+    {
+      std::unique_lock lock(m_overlayContainer);
+      for (const auto& overlay : *m_overlayContainer.GetOverlays())
+      {
+        if (!overlay->bForced && !GetSubtitleVisible())
+          continue;
+        const double at = overlay->bForced ? pts : pts - delay;
+        if (overlay->iPTSStartTime > at ||
+            (overlay->iPTSStopTime != 0 && overlay->iPTSStopTime <= at))
+          continue;
+        if (overlay->IsOverlayType(DVDOVERLAY_TYPE_GROUP))
+        {
+          const auto& group = static_cast<const CDVDOverlayGroup&>(*overlay).m_overlays;
+          overlays.insert(overlays.end(), group.begin(), group.end());
+        }
+        else
+          overlays.push_back(overlay);
+      }
+    }
+    m_renderManager.ReplacePresentedOverlays(overlays, pts, delay);
+  }
 }
 
 void CVideoPlayer::Render(bool clear, uint32_t alpha, bool gui)

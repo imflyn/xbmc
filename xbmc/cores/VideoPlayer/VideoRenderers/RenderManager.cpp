@@ -969,6 +969,18 @@ void CRenderManager::AddOverlay(std::shared_ptr<CDVDOverlay> o, double pts)
   m_overlays.AddOverlay(std::move(o), pts, idx);
 }
 
+void CRenderManager::ReplacePresentedOverlays(
+    const std::vector<std::shared_ptr<CDVDOverlay>>& overlays, double pts, double delay)
+{
+  // Called on the presentation thread after FrameMove. Replace only the held
+  // slot's subtitles; retain its decoded video and the AV queues while paused.
+  std::unique_lock lock(m_datalock);
+  m_overlays.Release(m_presentsource);
+  for (const auto& overlay : overlays)
+    m_overlays.AddOverlay(overlay, overlay->bForced ? pts : pts - delay, m_presentsource);
+  m_overlays.PrepareOverlays(m_presentsource);
+}
+
 bool CRenderManager::Supports(ERENDERFEATURE feature) const
 {
   std::unique_lock lock(m_statelock);

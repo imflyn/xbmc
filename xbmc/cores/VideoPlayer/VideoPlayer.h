@@ -28,6 +28,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -452,7 +453,10 @@ protected:
   void ProcessPacket(CDemuxStream* pStream, DemuxPacket* pPacket);
   void ProcessAudioData(CDemuxStream* pStream, DemuxPacket* pPacket);
   void ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket);
-  void ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket);
+  void ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket,
+                      std::shared_ptr<CDVDMsgDemuxerPacket> message = {});
+  bool CacheSubtitlePackets() const;
+  void ClearSubtitlePackets();
   void ProcessTeletextData(CDemuxStream* pStream, DemuxPacket* pPacket);
   void ProcessRadioRDSData(CDemuxStream* pStream, DemuxPacket* pPacket);
   void ProcessAudioID3Data(CDemuxStream* pStream, DemuxPacket* pPacket);
@@ -615,8 +619,8 @@ protected:
     int m_videoIndex{-1};
     int m_audioIndex{-1};
     int m_subtitleIndex{-1};
-    //! Last subtitle index that resolved to an open stream. A hidden subtitle is
-    //! closed on the demuxer but stays selected, so this outlives the stream.
+    //! Last subtitle index that resolved to an open stream. Hidden bitmap
+    //! subtitles may close their decoder but retain the selected index.
     int m_selectedSubtitleIndex{-1};
   } m_content;
 
@@ -642,6 +646,16 @@ protected:
   } m_SpeedState;
 
   double m_offset_pts;
+
+  // Player-thread-owned packets from every embedded subtitle track. Keep them
+  // while AV queues run ahead, so selecting a track never seeks/flushes AV.
+  struct SubtitlePacket
+  {
+    int source;
+    std::shared_ptr<CDVDMsgDemuxerPacket> message;
+  };
+  std::deque<SubtitlePacket> m_subtitlePackets;
+  size_t m_subtitlePacketBytes{0};
 
   CDVDMessageQueue m_messenger;
   std::unique_ptr<CJobQueue> m_outboundEvents;
