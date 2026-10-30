@@ -12,6 +12,7 @@
 #include "utils/HttpHeader.h"
 #include "utils/RingBuffer.h"
 
+#include <atomic>
 #include <map>
 #include <string>
 
@@ -108,7 +109,7 @@ namespace XFILE
           char* m_overflowBuffer; // in the rare case we would overflow the above buffer
           unsigned int m_overflowSize; // size of the overflow buffer
           int m_stillRunning; // Is background url fetch still in progress
-          bool m_cancelled;
+          std::atomic<bool> m_cancelled{false};
           int64_t m_fileSize;
           int64_t m_filePos;
           bool m_bFirstLoop;

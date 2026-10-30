@@ -717,6 +717,11 @@ const std::string CFileCache::GetProperty(XFILE::FileProperty type, const std::s
 
 int CFileCache::IoControl(IOControl request, void* param)
 {
+  // The prefetch worker may be blocked inside libcurl while CloseFile joins
+  // the decoder threads. Forward a nonblocking cancellation to its source.
+  if (request == IOControl::CANCEL_READ)
+    return m_source->IoControl(request, param);
+
   if (request == IOControl::CACHE_STATUS)
   {
     SCacheStatus* status = (SCacheStatus*)param;

@@ -89,6 +89,14 @@ void CDVDInputStreamFile::Close()
   m_eof = true;
 }
 
+void CDVDInputStreamFile::Abort()
+{
+  // CVideoPlayer::CloseFile invokes Abort before waiting for its main thread.
+  // The cache worker can otherwise remain blocked in a 30-second curl read.
+  if (m_pFile)
+    m_pFile->IoControl(IOControl::CANCEL_READ, nullptr);
+}
+
 int CDVDInputStreamFile::Read(uint8_t* buf, int buf_size)
 {
   if(!m_pFile) return -1;

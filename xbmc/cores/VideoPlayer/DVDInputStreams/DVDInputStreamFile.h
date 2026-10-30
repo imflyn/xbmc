@@ -17,6 +17,7 @@ public:
   ~CDVDInputStreamFile() override;
   bool Open() override;
   void Close() override;
+  void Abort() override;
   int Read(uint8_t* buf, int buf_size) override;
   int64_t Seek(int64_t offset, int whence) override;
   bool IsEOF() override;

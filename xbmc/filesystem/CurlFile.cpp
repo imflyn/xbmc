@@ -1889,6 +1889,9 @@ int8_t CCurlFile::CReadState::FillBuffer(unsigned int want)
         long timeout = 0;
         if (CURLM_OK != g_curlInterface.multi_timeout(m_multiHandle, &timeout) || timeout == -1 || timeout < 200)
           timeout = 200;
+        // Kodi may be closing the source on another thread. Cap each
+        // select wait so the cancellation flag is observed within 200 ms.
+        timeout = std::min(timeout, 200L);
 
         XbmcThreads::EndTime<> endTime{std::chrono::milliseconds(timeout)};
         int rc;
@@ -2158,6 +2161,14 @@ bool CCurlFile::GetCookies(const CURL &url, std::string &cookies)
 
 int CCurlFile::IoControl(IOControl request, void* param)
 {
+  // Abort must never join the read thread from the player's stop thread.
+  // The ongoing FillBuffer loop notices this atomic flag at its next poll.
+  if (request == IOControl::CANCEL_READ)
+  {
+    m_state->m_cancelled = true;
+    return 0;
+  }
+
   if (request == IOControl::SEEK_POSSIBLE)
     return m_seekable ? 1 : 0;
 
