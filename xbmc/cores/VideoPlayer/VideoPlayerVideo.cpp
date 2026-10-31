@@ -23,6 +23,7 @@
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
+#include <cstdlib>
 #include <iomanip>
 #include <iterator>
 #include <memory>
@@ -31,6 +32,20 @@
 #include <sstream>
 
 using namespace std::chrono_literals;
+
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+namespace
+{
+bool FastEmbedPrerollEnabled()
+{
+  static const bool enabled = [] {
+    const char* value = std::getenv("GOFUSE_KODI_FAST_PREROLL");
+    return value && value[0] == '1' && value[1] == '\0';
+  }();
+  return enabled;
+}
+} // namespace
+#endif
 
 class CDVDMsgVideoCodecChange : public CDVDMsg
 {
@@ -408,6 +423,12 @@ void CVideoPlayerVideo::Process()
       // Waiting timed out, output last picture
       if (m_picture.videoBuffer)
       {
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+        // Synthetic timestamps must never confirm a precise seek before a
+        // genuinely decoded target frame has reached the external output.
+        if (m_renderManager.SuppressEmbedSyntheticSeekFrame())
+          continue;
+#endif
         m_picture.pts = pts;
         m_outputSate = OutputPicture(&m_picture);
         pts += frametime;
@@ -462,7 +483,13 @@ void CVideoPlayerVideo::Process()
     {
       bool sync = std::static_pointer_cast<CDVDMsgBool>(pMsg)->m_value;
       if(m_pVideoCodec)
+      {
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+        if (FastEmbedPrerollEnabled())
+          m_pVideoCodec->SetCodecControl(0);
+#endif
         m_pVideoCodec->Reset();
+      }
 
       if (m_picture.videoBuffer)
       {
@@ -556,6 +583,11 @@ void CVideoPlayerVideo::Process()
       // dropping single frames does not help for codecs without non-reference frames (VP9, AV1)
       if (pPacket->m_keyFrame)
       {
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+        if (m_renderManager.HasEmbedExternalOutput())
+          m_renderManager.RecordEmbedKeyPacket(
+              pPacket->pts != DVD_NOPTS_VALUE ? pPacket->pts : pPacket->dts);
+#endif
         m_seenKeyFrame = true;
         m_skipToKeyFrame = false;
       }
@@ -614,6 +646,12 @@ void CVideoPlayerVideo::Process()
         codecControl |= DVD_CODEC_CTRL_DROP;
       if (bRequestDrop)
         codecControl |= DVD_CODEC_CTRL_DROP_ANY;
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+      if (FastEmbedPrerollEnabled() &&
+          m_renderManager.FastEmbedPrerollPacket(
+              pPacket->pts != DVD_NOPTS_VALUE ? pPacket->pts : pPacket->dts))
+        codecControl |= DVD_CODEC_CTRL_DROP_ANY;
+#endif
       if (!m_renderManager.Supports(RENDERFEATURE_ROTATION))
         codecControl |= DVD_CODEC_CTRL_ROTATE;
       m_pVideoCodec->SetCodecControl(codecControl);
@@ -787,6 +825,10 @@ bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
     }
 
     m_picture.pts = pts + extraDelay;
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+    if (m_renderManager.HasEmbedExternalOutput())
+      m_renderManager.RecordEmbedDecodedFrame(m_picture.pts);
+#endif
     // guess next frame pts. iDuration is always valid
     if (m_speed != 0)
       pts += m_picture.iDuration * m_speed / abs(m_speed);

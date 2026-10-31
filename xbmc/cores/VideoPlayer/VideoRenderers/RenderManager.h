@@ -81,6 +81,36 @@ public:
   struct EmbedOverlay { std::shared_ptr<CDVDOverlay> overlay; double pts; };
   void SetEmbedExternalOutput(bool enabled);
   bool HasEmbedExternalOutput() const { return m_embedExternal.load(); }
+  struct EmbedSeekTrace
+  {
+    uint64_t seekId{}, expectedEpoch{}, observedEpoch{};
+    int64_t targetPtsUs{}, startedNs{}, flushedNs{}, firstKeyPacketNs{},
+        firstDecodedNs{}, targetDecodedNs{}, firstSubmittedNs{}, targetSubmittedNs{},
+        firstTakenNs{}, targetTakenNs{}, targetPresentedNs{};
+    int64_t firstKeyPacketPtsUs{-1}, firstDecodedPtsUs{-1}, targetDecodedPtsUs{-1},
+        firstSubmittedPtsUs{-1}, targetSubmittedPtsUs{-1}, firstTakenPtsUs{-1},
+        targetTakenPtsUs{-1}, targetPresentedPtsUs{-1};
+    int64_t lastFlushedNs{}, lastTargetSubmittedNs{}, lastPresentationPollNs{},
+        lastExternalOutputTransitionNs{}, lastDecodedOutputNs{};
+    uint32_t externalOutputTransitions{};
+    uint32_t flushCount{}, prerollDecodedFrames{}, staleAheadDecodedFrames{},
+        discardedOldAheadFrames{}, overwrittenPendingFrames{},
+        targetSubmitCount{}, invalidatedTargetFrames{}, presentationPolls{},
+        blockedOnSeekAckPolls{}, maximumPresentationPollGapMs{},
+        fastPrerollChecks{}, fastPrerollPackets{}, fastPrerollInvalidPts{},
+        fastPrerollNotExternal{}, fastPrerollNotReady{}, fastPrerollNearTarget{},
+        decodedOutputsSinceFlush{}, maxDecodedOutputGapMs{}, slowDecodedOutputGaps{},
+        suppressedSyntheticSeekFrames{};
+    int64_t earliestCheckedPacketPtsUs{-1}, latestCheckedPacketPtsUs{-1};
+  };
+  void BeginEmbedSeekTrace(uint64_t seekId, int64_t targetPtsUs);
+  void RecordEmbedKeyPacket(double pts);
+  void RecordEmbedDecodedFrame(double pts);
+  bool FastEmbedPrerollPacket(double packetPts);
+  bool SuppressEmbedSyntheticSeekFrame();
+  void RecordEmbedPresentedFrame(int64_t ptsUs);
+  void RecordEmbedPresentationPoll(bool blockedBySeekAck);
+  bool GetEmbedSeekTrace(EmbedSeekTrace& trace);
   bool SubmitEmbedPicture(const VideoPicture& picture);
   bool TakeEmbedPicture(VideoPicture& picture, EmbedFrame& frame,
                         std::vector<EmbedOverlay>& overlays);
@@ -180,6 +210,7 @@ protected:
   std::atomic_bool m_embedExternal{false};
   std::unique_ptr<VideoPicture> m_embedPicture;
   EmbedFrame m_embedPictureFrame;
+  EmbedSeekTrace m_embedSeekTrace;
   std::vector<EmbedOverlay> m_embedPendingOverlays, m_embedPictureOverlays;
 #endif
   CBaseRenderer *m_pRenderer = nullptr;

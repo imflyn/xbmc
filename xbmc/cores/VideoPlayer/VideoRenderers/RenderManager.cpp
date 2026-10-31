@@ -28,10 +28,35 @@
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
+#include <chrono>
+#include <cmath>
 #include <memory>
 #include <mutex>
 
 using namespace std::chrono_literals;
+
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+namespace
+{
+int64_t EmbedTraceNowNs()
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+bool EmbedTraceReady(const CRenderManager::EmbedSeekTrace& trace, uint64_t epoch)
+{
+  return trace.seekId != 0 && trace.flushedNs != 0 && epoch >= trace.expectedEpoch;
+}
+
+bool EmbedTraceTargetFrame(const CRenderManager::EmbedSeekTrace& trace, int64_t ptsUs)
+{
+  return ptsUs >= trace.targetPtsUs - 500000 &&
+         ptsUs <= trace.targetPtsUs + 500000;
+}
+} // namespace
+#endif
 
 void CRenderManager::CClockSync::Reset()
 {
@@ -1201,9 +1226,30 @@ void CRenderManager::DiscardBuffer()
   std::unique_lock lock2(m_presentlock);
   ++m_embedEpoch;
 #if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  if (m_embedSeekTrace.seekId && m_embedEpoch >= m_embedSeekTrace.expectedEpoch)
+  {
+    ++m_embedSeekTrace.flushCount;
+    if (!m_embedSeekTrace.flushedNs)
+      m_embedSeekTrace.flushedNs = EmbedTraceNowNs();
+    m_embedSeekTrace.observedEpoch = m_embedEpoch;
+    m_embedSeekTrace.lastFlushedNs = EmbedTraceNowNs();
+    m_embedSeekTrace.lastDecodedOutputNs = 0;
+    m_embedSeekTrace.decodedOutputsSinceFlush = 0;
+    m_embedSeekTrace.maxDecodedOutputGapMs = 0;
+    m_embedSeekTrace.slowDecodedOutputGaps = 0;
+    if (m_embedPicture && m_embedPictureFrame.epoch >= m_embedSeekTrace.expectedEpoch &&
+        std::isfinite(m_embedPictureFrame.pts) && m_embedPictureFrame.pts >= 0)
+    {
+      const auto ptsUs = static_cast<int64_t>(m_embedPictureFrame.pts);
+      if (EmbedTraceTargetFrame(m_embedSeekTrace, ptsUs))
+        ++m_embedSeekTrace.invalidatedTargetFrames;
+      else if (ptsUs > m_embedSeekTrace.targetPtsUs + 500000)
+        ++m_embedSeekTrace.discardedOldAheadFrames;
+    }
+  }
   m_embedPicture.reset();
-  m_embedPendingOverlays.clear();
   m_embedPictureOverlays.clear();
+  m_embedPendingOverlays.clear();
 #endif
 
   while(!m_queued.empty())
@@ -1223,6 +1269,11 @@ void CRenderManager::SetEmbedExternalOutput(bool enabled)
   std::unique_lock lock(m_presentlock);
   if (m_embedExternal.exchange(enabled) == enabled)
     return;
+  if (m_embedSeekTrace.seekId && !m_embedSeekTrace.targetPresentedNs)
+  {
+    ++m_embedSeekTrace.externalOutputTransitions;
+    m_embedSeekTrace.lastExternalOutputTransitionNs = EmbedTraceNowNs();
+  }
   DiscardBuffer();
   m_embedPicture.reset();
   m_embedPendingOverlays.clear();
@@ -1230,11 +1281,174 @@ void CRenderManager::SetEmbedExternalOutput(bool enabled)
   m_presentevent.notifyAll();
 }
 
+void CRenderManager::BeginEmbedSeekTrace(uint64_t seekId, int64_t targetPtsUs)
+{
+  std::unique_lock lock(m_presentlock);
+  m_embedSeekTrace = {};
+  m_embedSeekTrace.seekId = seekId;
+  m_embedSeekTrace.targetPtsUs = targetPtsUs;
+  m_embedSeekTrace.expectedEpoch = m_embedEpoch + 1;
+  m_embedSeekTrace.startedNs = EmbedTraceNowNs();
+}
+
+void CRenderManager::RecordEmbedKeyPacket(double pts)
+{
+  std::unique_lock lock(m_presentlock);
+  auto& trace = m_embedSeekTrace;
+  if (!EmbedTraceReady(trace, m_embedEpoch) || trace.firstKeyPacketNs)
+    return;
+  trace.firstKeyPacketNs = EmbedTraceNowNs();
+  if (std::isfinite(pts) && pts >= 0)
+    trace.firstKeyPacketPtsUs = static_cast<int64_t>(pts);
+}
+
+void CRenderManager::RecordEmbedDecodedFrame(double pts)
+{
+  if (!std::isfinite(pts) || pts < 0)
+    return;
+  std::unique_lock lock(m_presentlock);
+  auto& trace = m_embedSeekTrace;
+  if (!EmbedTraceReady(trace, m_embedEpoch) ||
+      (trace.targetDecodedNs && trace.targetDecodedNs >= trace.lastFlushedNs))
+    return;
+  const auto now = EmbedTraceNowNs();
+  const auto ptsUs = static_cast<int64_t>(pts);
+  if (trace.lastDecodedOutputNs)
+  {
+    const auto gap = static_cast<uint32_t>((now - trace.lastDecodedOutputNs) / 1000000);
+    trace.maxDecodedOutputGapMs = std::max(trace.maxDecodedOutputGapMs, gap);
+    if (gap >= 80)
+      ++trace.slowDecodedOutputGaps;
+  }
+  trace.lastDecodedOutputNs = now;
+  ++trace.decodedOutputsSinceFlush;
+  if (!trace.firstDecodedNs)
+  {
+    trace.firstDecodedNs = now;
+    trace.firstDecodedPtsUs = ptsUs;
+  }
+  if (EmbedTraceTargetFrame(trace, ptsUs))
+  {
+    trace.targetDecodedNs = now;
+    trace.targetDecodedPtsUs = ptsUs;
+  }
+  else if (ptsUs > trace.targetPtsUs + 500000)
+    ++trace.staleAheadDecodedFrames;
+  else
+    ++trace.prerollDecodedFrames;
+}
+
+bool CRenderManager::FastEmbedPrerollPacket(double packetPts)
+{
+  std::unique_lock lock(m_presentlock);
+  auto& trace = m_embedSeekTrace;
+  if (trace.seekId)
+    ++trace.fastPrerollChecks;
+  if (!std::isfinite(packetPts) || packetPts < 0)
+  {
+    ++trace.fastPrerollInvalidPts;
+    return false;
+  }
+  const auto ptsUs = static_cast<int64_t>(packetPts);
+  if (trace.earliestCheckedPacketPtsUs < 0 || ptsUs < trace.earliestCheckedPacketPtsUs)
+    trace.earliestCheckedPacketPtsUs = ptsUs;
+  if (trace.latestCheckedPacketPtsUs < 0 || ptsUs > trace.latestCheckedPacketPtsUs)
+    trace.latestCheckedPacketPtsUs = ptsUs;
+  if (!m_embedExternal)
+  {
+    ++trace.fastPrerollNotExternal;
+    return false;
+  }
+  if (!EmbedTraceReady(trace, m_embedEpoch))
+  {
+    ++trace.fastPrerollNotReady;
+    return false;
+  }
+  if (trace.targetPresentedNs ||
+      ptsUs >= trace.targetPtsUs - 3000000)
+  {
+    ++trace.fastPrerollNearTarget;
+    return false;
+  }
+  ++trace.fastPrerollPackets;
+  return true;
+}
+
+bool CRenderManager::SuppressEmbedSyntheticSeekFrame()
+{
+  std::unique_lock lock(m_presentlock);
+  auto& trace = m_embedSeekTrace;
+  if (!m_embedExternal || !EmbedTraceReady(trace, m_embedEpoch) ||
+      trace.targetPresentedNs ||
+      (trace.targetDecodedNs && trace.targetDecodedNs >= trace.lastFlushedNs))
+    return false;
+  ++trace.suppressedSyntheticSeekFrames;
+  return true;
+}
+
+void CRenderManager::RecordEmbedPresentedFrame(int64_t ptsUs)
+{
+  std::unique_lock lock(m_presentlock);
+  auto& trace = m_embedSeekTrace;
+  if (!EmbedTraceReady(trace, m_embedEpoch) || trace.targetPresentedNs ||
+      !EmbedTraceTargetFrame(trace, ptsUs))
+    return;
+  trace.targetPresentedNs = EmbedTraceNowNs();
+  trace.targetPresentedPtsUs = ptsUs;
+}
+
+void CRenderManager::RecordEmbedPresentationPoll(bool blockedBySeekAck)
+{
+  std::unique_lock lock(m_presentlock);
+  auto& trace = m_embedSeekTrace;
+  if (!EmbedTraceReady(trace, m_embedEpoch) || trace.targetPresentedNs)
+    return;
+  const auto now = EmbedTraceNowNs();
+  if (trace.lastPresentationPollNs)
+    trace.maximumPresentationPollGapMs = std::max<uint32_t>(
+        trace.maximumPresentationPollGapMs,
+        static_cast<uint32_t>((now - trace.lastPresentationPollNs) / 1000000));
+  trace.lastPresentationPollNs = now;
+  ++trace.presentationPolls;
+  if (blockedBySeekAck)
+    ++trace.blockedOnSeekAckPolls;
+}
+
+bool CRenderManager::GetEmbedSeekTrace(EmbedSeekTrace& trace)
+{
+  std::unique_lock lock(m_presentlock);
+  trace = m_embedSeekTrace;
+  return trace.seekId != 0;
+}
+
 bool CRenderManager::SubmitEmbedPicture(const VideoPicture& picture)
 {
   std::unique_lock lock(m_presentlock);
   if (!m_embedExternal)
     return false;
+  auto& trace = m_embedSeekTrace;
+  if (EmbedTraceReady(trace, m_embedEpoch) && std::isfinite(picture.pts) && picture.pts >= 0)
+  {
+    const auto ptsUs = static_cast<int64_t>(picture.pts);
+    const auto now = EmbedTraceNowNs();
+    if (!trace.firstSubmittedNs)
+    {
+      trace.firstSubmittedNs = now;
+      trace.firstSubmittedPtsUs = ptsUs;
+    }
+    if (EmbedTraceTargetFrame(trace, ptsUs))
+    {
+      if (!trace.targetSubmittedNs)
+      {
+        trace.targetSubmittedNs = now;
+        trace.targetSubmittedPtsUs = ptsUs;
+      }
+      trace.lastTargetSubmittedNs = now;
+      ++trace.targetSubmitCount;
+    }
+    if (m_embedPicture && !trace.targetPresentedNs)
+      ++trace.overwrittenPendingFrames;
+  }
   m_embedPicture = std::make_unique<VideoPicture>();
   m_embedPicture->CopyRef(picture);
   m_embedPictureFrame = {m_embedEpoch, ++m_embedSequence, picture.pts};
@@ -1251,6 +1465,22 @@ bool CRenderManager::TakeEmbedPicture(VideoPicture& picture, EmbedFrame& frame,
     return false;
   picture.CopyRef(*m_embedPicture);
   frame = m_embedPictureFrame;
+  auto& trace = m_embedSeekTrace;
+  if (EmbedTraceReady(trace, m_embedEpoch) && std::isfinite(frame.pts) && frame.pts >= 0)
+  {
+    const auto ptsUs = static_cast<int64_t>(frame.pts);
+    const auto now = EmbedTraceNowNs();
+    if (!trace.firstTakenNs)
+    {
+      trace.firstTakenNs = now;
+      trace.firstTakenPtsUs = ptsUs;
+    }
+    if (!trace.targetTakenNs && EmbedTraceTargetFrame(trace, ptsUs))
+    {
+      trace.targetTakenNs = now;
+      trace.targetTakenPtsUs = ptsUs;
+    }
+  }
   overlays = std::move(m_embedPictureOverlays);
   m_embedPicture.reset();
   return true;

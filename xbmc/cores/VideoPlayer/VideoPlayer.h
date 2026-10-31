@@ -411,6 +411,10 @@ public:
   bool GetEmbedFrame(CRenderManager::EmbedFrame& frame) { return m_renderManager.GetEmbedFrame(frame); }
   uint64_t GetEmbedEpoch() { return m_renderManager.GetEmbedEpoch(); }
 #if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  void BeginEmbedSeekTrace(uint64_t id, int64_t targetUs) { m_renderManager.BeginEmbedSeekTrace(id, targetUs); }
+  bool GetEmbedSeekTrace(CRenderManager::EmbedSeekTrace& trace) { return m_renderManager.GetEmbedSeekTrace(trace); }
+  void RecordEmbedPresentedFrame(int64_t ptsUs) { m_renderManager.RecordEmbedPresentedFrame(ptsUs); }
+  void RecordEmbedPresentationPoll(bool blockedBySeekAck) { m_renderManager.RecordEmbedPresentationPoll(blockedBySeekAck); }
   double GetEmbedClock() { return m_clock.GetClock(); }
   void SetEmbedExternalOutput(bool enabled) { m_renderManager.SetEmbedExternalOutput(enabled); }
   bool TakeEmbedPicture(VideoPicture& picture, CRenderManager::EmbedFrame& frame,
