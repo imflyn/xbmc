@@ -2285,6 +2285,12 @@ void CVideoPlayer::HandlePlaySpeed()
   {
     if (m_playSpeed == DVD_PLAYSPEED_NORMAL && !tolerateStall)
     {
+      // A newly selected local audio decoder must not flush or seek the
+      // healthy video while its first packets join the current timeline.
+      const bool audioSwitchWarmup =
+          std::chrono::steady_clock::now() < m_seamlessAudioSwitchUntil &&
+          m_CurrentVideo.id >= 0 && !m_VideoPlayerVideo->IsStalled() &&
+          m_processInfo->GetLevelVQ() > 0;
       // take action if audio or video stream is stalled
       if (((m_VideoPlayerAudio->IsStalled() && m_CurrentAudio.inited) ||
            (m_VideoPlayerVideo->IsStalled() && m_CurrentVideo.inited)) &&
@@ -2309,12 +2315,12 @@ void CVideoPlayer::HandlePlaySpeed()
         else
         {
           // start caching if audio and video have run dry
-          if (m_VideoPlayerAudio->GetLevel() <= 50 &&
+          if (!audioSwitchWarmup && m_VideoPlayerAudio->GetLevel() <= 50 &&
               m_processInfo->GetLevelVQ() <= 50)
           {
             SetCaching(CACHESTATE_FULL);
           }
-          else if (m_CurrentAudio.id >= 0 && m_CurrentAudio.inited &&
+          else if (!audioSwitchWarmup && m_CurrentAudio.id >= 0 && m_CurrentAudio.inited &&
                    m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
                    m_VideoPlayerAudio->GetLevel() == 0)
           {
@@ -3386,16 +3392,29 @@ void CVideoPlayer::HandleMessages()
         else if (!st.IsCurrent(m_CurrentAudio))
         {
           CloseStream(m_CurrentAudio, false);
-          OpenStream(m_CurrentAudio, st.demuxerId, st.id, st.source);
+          const bool opened = OpenStream(m_CurrentAudio, st.demuxerId, st.id, st.source);
           AdaptForcedSubtitles();
 
-          CDVDMsgPlayerSeek::CMode mode;
-          mode.time = (int)GetUpdatedTime();
-          mode.backward = true;
-          mode.accurate = true;
-          mode.trickplay = true;
-          mode.sync = true;
-          m_messenger.Put(std::make_shared<CDVDMsgPlayerSeek>(mode));
+          // Keep video running while a local audio decoder starts at the current clock.
+          const bool seamlessAudioSwitch = opened &&
+                                           CEnvironment::getenv("GOFUSE_KODI_EMBEDDED") == "1" &&
+                                           m_pInputStream && !m_pInputStream->IsRealtime() &&
+                                           !NETWORK::IsRemote(m_item) &&
+                                           STREAM_SOURCE_MASK(st.source) == STREAM_SOURCE_DEMUX;
+          if (seamlessAudioSwitch)
+          {
+            m_seamlessAudioSwitchUntil = std::chrono::steady_clock::now() + 5s;
+          }
+          else
+          {
+            CDVDMsgPlayerSeek::CMode mode;
+            mode.time = (int)GetUpdatedTime();
+            mode.backward = true;
+            mode.accurate = true;
+            mode.trickplay = true;
+            mode.sync = true;
+            m_messenger.Put(std::make_shared<CDVDMsgPlayerSeek>(mode));
+          }
         }
       }
     }
@@ -4793,6 +4812,7 @@ bool CVideoPlayer::CloseStream(CCurrentStream& current, bool bWaitForBuffers)
 
 void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
 {
+  m_seamlessAudioSwitchUntil = {};
   ClearSubtitlePackets();
   m_syncStartPtsWait.reset();
   CLog::Log(LOGDEBUG, "CVideoPlayer::FlushBuffers - flushing buffers");

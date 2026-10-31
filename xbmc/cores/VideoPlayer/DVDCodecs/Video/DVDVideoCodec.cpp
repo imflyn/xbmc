@@ -54,7 +54,10 @@ void VideoPicture::Reset()
   pict_type = 0;
 
   hdrType = StreamHdrType::HDR_TYPE_NONE;
+  hdrTypeAlt = StreamHdrType::HDR_TYPE_NONE;
+  strDVELType.clear();
   doviRpu.reset();
+  hdrFrameMetadata = {};
 
   hasDisplayMetadata = false;
   hasLightMetadata = false;

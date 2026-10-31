@@ -612,6 +612,7 @@ protected:
 
   ECacheState  m_caching;
   XbmcThreads::EndTime<> m_cachingTimer;
+  std::chrono::steady_clock::time_point m_seamlessAudioSwitchUntil{};
 
   std::unique_ptr<CProcessInfo> m_processInfo;
 

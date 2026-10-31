@@ -16,6 +16,7 @@ all: .installed-$(PLATFORM)
 	cd $(PLATFORM); patch -p1 -i ../01-disable-libedit.patch
 	cd $(PLATFORM); patch -p1 -i ../02-fix-build-with-autoconf-2.72.patch
 	cd $(PLATFORM); $(AUTORECONF) -vif
+	cp $(NATIVEPREFIX)/share/libtool/build-aux/ltmain.sh $(PLATFORM)/ltmain.sh
 	cd $(PLATFORM); ./configure --prefix=$(PREFIX) --disable-shared
 	touch $@
 

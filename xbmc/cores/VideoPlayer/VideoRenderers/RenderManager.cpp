@@ -1338,6 +1338,52 @@ void CRenderManager::RecordEmbedDecodedFrame(double pts)
     ++trace.prerollDecodedFrames;
 }
 
+void CRenderManager::RecordEmbedPacketArrival()
+{
+  std::unique_lock lock(m_presentlock);
+  auto& trace = m_embedSeekTrace;
+  if (!EmbedTraceReady(trace, m_embedEpoch) || trace.targetDecodedNs)
+    return;
+  const auto now = EmbedTraceNowNs();
+  if (trace.lastPacketArrivalNs)
+  {
+    const auto gap = static_cast<uint32_t>((now - trace.lastPacketArrivalNs) / 1000000);
+    trace.maxPacketArrivalGapMs = std::max(trace.maxPacketArrivalGapMs, gap);
+    if (gap >= 80)
+      ++trace.packetArrivalGapsOver80Ms;
+  }
+  trace.lastPacketArrivalNs = now;
+}
+
+void CRenderManager::RecordEmbedSeekStage(EmbedSeekStage stage, int64_t durationUs)
+{
+  if (durationUs < 0)
+    return;
+  std::unique_lock lock(m_presentlock);
+  auto& trace = m_embedSeekTrace;
+  if (!EmbedTraceReady(trace, m_embedEpoch) || trace.targetDecodedNs)
+    return;
+  const auto us = static_cast<uint32_t>(std::min<int64_t>(durationUs, UINT32_MAX));
+  switch (stage)
+  {
+    case EmbedSeekStage::PacketFeed:
+      ++trace.packetFeedCalls;
+      trace.packetFeedTotalUs += us;
+      trace.maxPacketFeedUs = std::max(trace.maxPacketFeedUs, us);
+      break;
+    case EmbedSeekStage::DecoderPoll:
+      ++trace.decoderPollCalls;
+      trace.decoderPollTotalUs += us;
+      trace.maxDecoderPollUs = std::max(trace.maxDecoderPollUs, us);
+      break;
+    case EmbedSeekStage::FrameOutput:
+      ++trace.frameOutputCalls;
+      trace.frameOutputTotalUs += us;
+      trace.maxFrameOutputUs = std::max(trace.maxFrameOutputUs, us);
+      break;
+  }
+}
+
 bool CRenderManager::FastEmbedPrerollPacket(double packetPts)
 {
   std::unique_lock lock(m_presentlock);

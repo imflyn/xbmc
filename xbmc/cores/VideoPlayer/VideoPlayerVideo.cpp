@@ -571,6 +571,10 @@ void CVideoPlayerVideo::Process()
     else if (pMsg->IsType(CDVDMsg::DEMUXER_PACKET))
     {
       DemuxPacket* pPacket = std::static_pointer_cast<CDVDMsgDemuxerPacket>(pMsg)->GetPacket();
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+      if (m_renderManager.HasEmbedExternalOutput())
+        m_renderManager.RecordEmbedPacketArrival();
+#endif
       bool bPacketDrop = std::static_pointer_cast<CDVDMsgDemuxerPacket>(pMsg)->GetPacketDrop();
 
       if (m_stalled)
@@ -656,7 +660,18 @@ void CVideoPlayerVideo::Process()
         codecControl |= DVD_CODEC_CTRL_ROTATE;
       m_pVideoCodec->SetCodecControl(codecControl);
 
-      if (m_pVideoCodec->AddData(*pPacket))
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+      const auto packetFeedStart = std::chrono::steady_clock::now();
+#endif
+      const bool packetAccepted = m_pVideoCodec->AddData(*pPacket);
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+      if (m_renderManager.HasEmbedExternalOutput())
+        m_renderManager.RecordEmbedSeekStage(
+            CRenderManager::EmbedSeekStage::PacketFeed,
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - packetFeedStart).count());
+#endif
+      if (packetAccepted)
       {
         // buffer packets so we can recover should decoder flush for some reason
         if (m_pVideoCodec->GetConvergeCount() > 0)
@@ -693,7 +708,17 @@ void CVideoPlayerVideo::UpdatePlayerInfo()
 
 bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
 {
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  const auto decoderPollStart = std::chrono::steady_clock::now();
+#endif
   CDVDVideoCodec::VCReturn decoderState = m_pVideoCodec->GetPicture(&m_picture);
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+  if (m_renderManager.HasEmbedExternalOutput())
+    m_renderManager.RecordEmbedSeekStage(
+        CRenderManager::EmbedSeekStage::DecoderPoll,
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - decoderPollStart).count());
+#endif
 
   if (decoderState == CDVDVideoCodec::VC_BUFFER)
   {
@@ -833,7 +858,17 @@ bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
     if (m_speed != 0)
       pts += m_picture.iDuration * m_speed / abs(m_speed);
 
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+    const auto frameOutputStart = std::chrono::steady_clock::now();
+#endif
     m_outputSate = OutputPicture(&m_picture);
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+    if (m_renderManager.HasEmbedExternalOutput())
+      m_renderManager.RecordEmbedSeekStage(
+          CRenderManager::EmbedSeekStage::FrameOutput,
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - frameOutputStart).count());
+#endif
 
     if (m_outputSate == OUTPUT_AGAIN)
     {

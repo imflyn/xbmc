@@ -34,6 +34,13 @@ all: .installed-$(PLATFORM)
 	touch $@
 
 $(LIBDYLIB): .configured-$(PLATFORM)
+ifeq ($(NATIVE_OS), osx)
+	$(MAKE) -C $(PLATFORM) build_libs
+	# Xcode 27's linker rejects members in OpenSSL's ar-created archives
+	# unless the Darwin static archives are repacked with libtool.
+	cd $(PLATFORM) && xcrun libtool -static -o libcrypto-aligned.a libcrypto.a && mv libcrypto-aligned.a libcrypto.a
+	cd $(PLATFORM) && xcrun libtool -static -o libssl-aligned.a libssl.a && mv libssl-aligned.a libssl.a
+endif
 	$(MAKE) -C $(PLATFORM)
 	touch $@
 

@@ -101,11 +101,19 @@ public:
         fastPrerollNotExternal{}, fastPrerollNotReady{}, fastPrerollNearTarget{},
         decodedOutputsSinceFlush{}, maxDecodedOutputGapMs{}, slowDecodedOutputGaps{},
         suppressedSyntheticSeekFrames{};
+    uint32_t packetFeedCalls{}, decoderPollCalls{}, frameOutputCalls{},
+        maxPacketFeedUs{}, maxDecoderPollUs{}, maxFrameOutputUs{},
+        maxPacketArrivalGapMs{}, packetArrivalGapsOver80Ms{};
+    uint64_t packetFeedTotalUs{}, decoderPollTotalUs{}, frameOutputTotalUs{};
+    int64_t lastPacketArrivalNs{};
     int64_t earliestCheckedPacketPtsUs{-1}, latestCheckedPacketPtsUs{-1};
   };
   void BeginEmbedSeekTrace(uint64_t seekId, int64_t targetPtsUs);
   void RecordEmbedKeyPacket(double pts);
   void RecordEmbedDecodedFrame(double pts);
+  enum class EmbedSeekStage { PacketFeed, DecoderPoll, FrameOutput };
+  void RecordEmbedPacketArrival();
+  void RecordEmbedSeekStage(EmbedSeekStage stage, int64_t durationUs);
   bool FastEmbedPrerollPacket(double packetPts);
   bool SuppressEmbedSyntheticSeekFrame();
   void RecordEmbedPresentedFrame(int64_t ptsUs);

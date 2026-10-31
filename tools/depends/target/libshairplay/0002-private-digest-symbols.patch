@@ -1,0 +1,18 @@
+diff --git a/src/lib/crypto/crypto.h b/src/lib/crypto/crypto.h
+--- a/src/lib/crypto/crypto.h
++++ b/src/lib/crypto/crypto.h
+@@ -35,6 +35,14 @@
+  */
+ 
+ #ifndef HEADER_CRYPTO_H
+ #define HEADER_CRYPTO_H
++
++#define MD5_Init shairplay_MD5_Init
++#define MD5_Update shairplay_MD5_Update
++#define MD5_Final shairplay_MD5_Final
++#define SHA1_Init shairplay_SHA1_Init
++#define SHA1_Update shairplay_SHA1_Update
++#define SHA1_Final shairplay_SHA1_Final
++
+ 
+ #ifdef __cplusplus

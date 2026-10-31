@@ -1,5 +1,5 @@
 include ../../Makefile.include
-DEPS = ../../Makefile.include Makefile 0001-configure-fix-dns-sd-check.patch ../../download-files.include
+DEPS = ../../Makefile.include Makefile 0001-configure-fix-dns-sd-check.patch 0002-private-digest-symbols.patch ../../download-files.include
 
 # lib name, version
 LIBNAME=shairplay
@@ -22,6 +22,7 @@ all: .installed-$(PLATFORM)
 	rm -rf $(PLATFORM); mkdir -p $(PLATFORM)
 	cd $(PLATFORM); $(ARCHIVE_TOOL) $(ARCHIVE_TOOL_FLAGS) $(TARBALLS_LOCATION)/$(ARCHIVE)
 	cd $(PLATFORM); patch -p1 -i ../0001-configure-fix-dns-sd-check.patch
+	cd $(PLATFORM); patch -p1 -i ../0002-private-digest-symbols.patch
 	cd $(PLATFORM); $(AUTORECONF) -vif
 	cd $(PLATFORM); $(CONFIGURE)
 	touch $@

@@ -33,6 +33,10 @@ export GPG_ERROR_CONFIG=$(PREFIX)/bin/gpg-error-config
 CONFIGURE=cp -f $(CONFIG_SUB) $(CONFIG_GUESS) .; \
           ./configure --prefix=$(PREFIX) --disable-doc --disable-shared $(CONFIGURE_FLAGS)
 
+ifeq ($(OS),darwin_embedded)
+  CONFIGURE += CC_FOR_BUILD="$(CC_FOR_BUILD) -target arm64-apple-macos11 -isysroot $(shell xcrun --sdk macosx --show-sdk-path)"
+endif
+
 LIBDYLIB=$(PLATFORM)/src/.libs/$(BYPRODUCT)
 
 all: .installed-$(PLATFORM)

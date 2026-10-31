@@ -11,6 +11,10 @@ CONFIGURE=./configure --prefix=$(PREFIX) \
                       --disable-nls \
                       --disable-shared
 
+ifeq ($(OS),darwin_embedded)
+  CONFIGURE += CC_FOR_BUILD="$(CC_FOR_BUILD) -target arm64-apple-macos11 -isysroot $(shell xcrun --sdk macosx --show-sdk-path)"
+endif
+
 LIBDYLIB=$(PLATFORM)/src/.libs/$(LIBNAME).a
 
 all: .installed-$(PLATFORM)

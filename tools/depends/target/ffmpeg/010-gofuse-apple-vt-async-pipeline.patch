@@ -1,0 +1,332 @@
+--- a/libavcodec/videotoolbox.c
++++ b/libavcodec/videotoolbox.c
+@@ -26,8 +26,9 @@
+ #include "libavutil/attributes.h"
+ #include "libavutil/hwcontext_videotoolbox.h"
+ #include "libavutil/mem.h"
+ #include "vt_internal.h"
++#include "vt_async_queue.h"
+ #include "libavutil/avutil.h"
+ #include "libavutil/hwcontext.h"
+ #include "libavutil/pixdesc.h"
+ #include "bytestream.h"
+@@ -67,15 +68,19 @@
+ 
+ typedef struct VTHWFrame {
+     CVPixelBufferRef pixbuf;
+     AVBufferRef *hw_frames_ctx;
++    GoFuseVTTicket *async_ticket;
+ } VTHWFrame;
+ 
+ static void videotoolbox_buffer_release(void *opaque, uint8_t *data)
+ {
+     VTHWFrame *ref = (VTHWFrame *)data;
+     av_buffer_unref(&ref->hw_frames_ctx);
+-    CVPixelBufferRelease(ref->pixbuf);
++    if (ref->async_ticket)
++        gofuse_vt_ticket_release(ref->async_ticket);
++    if (ref->pixbuf)
++        CVPixelBufferRelease(ref->pixbuf);
+ 
+     av_free(data);
+ }
+ 
+@@ -118,12 +123,34 @@
+ 
+     return 0;
+ }
+ 
++static int videotoolbox_buffer_create(AVCodecContext *avctx, AVFrame *frame,
++                                      CVPixelBufferRef pixbuf);
++
+ static int videotoolbox_postproc_frame(void *avctx, AVFrame *frame)
+ {
+     int ret;
+     VTHWFrame *ref = (VTHWFrame *)frame->buf[0]->data;
++
++    if (ref->async_ticket) {
++        void *output = NULL;
++        GoFuseVTTicket *ticket = ref->async_ticket;
++        GoFuseVTResult state = gofuse_vt_ticket_wait(ticket, 6000, &output);
++        ref->async_ticket = NULL;
++        if (state != GOFUSE_VT_OK || !output) {
++            if (output)
++                CVPixelBufferRelease((CVPixelBufferRef)output);
++            gofuse_vt_ticket_release(ticket);
++            av_log(avctx, AV_LOG_WARNING, "GoFuse VT async frame not ready: %d\n", state);
++            av_frame_unref(frame);
++            return AVERROR_EXTERNAL;
++        }
++        ret = videotoolbox_buffer_create(avctx, frame, (CVPixelBufferRef)output);
++        gofuse_vt_ticket_release(ticket);
++        if (ret < 0)
++            return ret;
++    }
+ 
+     if (!ref->pixbuf) {
+         av_log(avctx, AV_LOG_ERROR, "No frame decoded?\n");
+         av_frame_unref(frame);
+@@ -516,8 +543,13 @@
+         videotoolbox->cm_fmt_desc = NULL;
+     }
+ 
+     if (videotoolbox->session) {
++        VTContext *vtctx = avctx->internal->hwaccel_priv_data;
++        if (vtctx && vtctx->gofuse_async_queue) {
++            gofuse_vt_queue_seek(vtctx->gofuse_async_queue);
++            VTDecompressionSessionWaitForAsynchronousFrames(videotoolbox->session);
++        }
+         VTDecompressionSessionInvalidate(videotoolbox->session);
+         CFRelease(videotoolbox->session);
+         videotoolbox->session = NULL;
+     }
+@@ -535,18 +567,26 @@
+ 
+     if (vtctx->vt_ctx)
+         videotoolbox_stop(avctx);
+ 
++    if (vtctx->gofuse_async_queue) {
++        AVVideotoolboxContext *videotoolbox = videotoolbox_get_context(avctx);
++        if (videotoolbox && videotoolbox->session)
++            VTDecompressionSessionWaitForAsynchronousFrames(videotoolbox->session);
++        gofuse_vt_queue_close(vtctx->gofuse_async_queue);
++        vtctx->gofuse_async_queue = NULL;
++    }
++
+     av_buffer_unref(&vtctx->cached_hw_frames_ctx);
+     av_freep(&vtctx->vt_ctx);
+ 
+     return 0;
+ }
+ 
+-static int videotoolbox_buffer_create(AVCodecContext *avctx, AVFrame *frame)
++static int videotoolbox_buffer_create(AVCodecContext *avctx, AVFrame *frame,
++                                      CVPixelBufferRef pixbuf)
+ {
+     VTContext *vtctx = avctx->internal->hwaccel_priv_data;
+-    CVPixelBufferRef pixbuf = (CVPixelBufferRef)vtctx->frame;
+     OSType pixel_format = CVPixelBufferGetPixelFormatType(pixbuf);
+     enum AVPixelFormat sw_format = av_map_videotoolbox_format_to_pixfmt(pixel_format);
+     int width = CVPixelBufferGetWidth(pixbuf);
+     int height = CVPixelBufferGetHeight(pixbuf);
+@@ -554,8 +594,9 @@
+     VTHWFrame *ref;
+     int ret;
+ 
+     if (!frame->buf[0] || frame->data[3]) {
++        CVPixelBufferRelease(pixbuf);
+         av_log(avctx, AV_LOG_ERROR, "videotoolbox: invalid state\n");
+         av_frame_unref(frame);
+         return AVERROR_EXTERNAL;
+     }
+@@ -563,10 +604,9 @@
+     ref = (VTHWFrame *)frame->buf[0]->data;
+ 
+     if (ref->pixbuf)
+         CVPixelBufferRelease(ref->pixbuf);
+-    ref->pixbuf = vtctx->frame;
+-    vtctx->frame = NULL;
++    ref->pixbuf = pixbuf;
+ 
+     // Old API code path.
+     if (!vtctx->cached_hw_frames_ctx)
+         return 0;
+@@ -724,8 +764,16 @@
+                                           CMTime duration)
+ {
+     VTContext *vtctx = opaque;
+ 
++    if (sourceFrameRefCon) {
++        CVPixelBufferRef output = status == noErr && image_buffer
++            ? CVPixelBufferRetain(image_buffer) : NULL;
++        gofuse_vt_ticket_complete((GoFuseVTTicket *)sourceFrameRefCon,
++                                  status == noErr, output);
++        return;
++    }
++
+     if (vtctx->frame) {
+         CVPixelBufferRelease(vtctx->frame);
+         vtctx->frame = NULL;
+     }
+@@ -772,8 +820,65 @@
+ 
+     CFRelease(sample_buf);
+ 
+     return status;
++}
++
++static int gofuse_vt_async_submit(AVCodecContext *avctx, AVFrame *frame)
++{
++    VTContext *vtctx = avctx->internal->hwaccel_priv_data;
++    AVVideotoolboxContext *videotoolbox = videotoolbox_get_context(avctx);
++    GoFuseVTQueue *queue = vtctx->gofuse_async_queue;
++    GoFuseVTTicket *ticket = NULL;
++    CMSampleBufferRef sample = NULL;
++    const void *input;
++    size_t input_size;
++    uint64_t generation;
++    GoFuseVTResult state;
++    OSStatus status;
++    VTHWFrame *ref;
++
++    if (!frame->buf[0] || !queue)
++        return AVERROR(EINVAL);
++    ref = (VTHWFrame *)frame->buf[0]->data;
++    if (ref->async_ticket)
++        return AVERROR_INVALIDDATA;
++
++    generation = gofuse_vt_queue_generation(queue);
++    state = gofuse_vt_queue_wait_capacity(queue, generation, 3000);
++    if (state != GOFUSE_VT_OK)
++        return AVERROR_EXTERNAL;
++    state = gofuse_vt_queue_reserve(queue, generation, frame->pts, &ticket);
++    if (state != GOFUSE_VT_OK)
++        return AVERROR_EXTERNAL;
++
++    state = gofuse_vt_ticket_copy_input(ticket, vtctx->bitstream, vtctx->bitstream_size);
++    if (state != GOFUSE_VT_OK)
++        goto fail;
++
++    input = gofuse_vt_ticket_input(ticket, &input_size);
++    sample = videotoolbox_sample_buffer_create(videotoolbox->cm_fmt_desc,
++                                               (void *)input, (int)input_size);
++    if (!sample)
++        goto fail;
++
++    status = VTDecompressionSessionDecodeFrame(
++        videotoolbox->session, sample,
++        kVTDecodeFrame_EnableAsynchronousDecompression, ticket, NULL);
++    CFRelease(sample);
++    if (status != noErr) {
++        if (status == kVTVideoDecoderMalfunctionErr || status == kVTInvalidSessionErr)
++            vtctx->reconfig_needed = true;
++        av_log(avctx, AV_LOG_ERROR, "GoFuse VT async submit failed: %d\n", (int)status);
++        goto fail;
++    }
++    ref->async_ticket = ticket;
++    return 0;
++
++fail:
++    gofuse_vt_ticket_complete(ticket, 0, NULL);
++    gofuse_vt_ticket_release(ticket);
++    return AVERROR_EXTERNAL;
+ }
+ 
+ static CMVideoFormatDescriptionRef videotoolbox_format_desc_create(CMVideoCodecType codec_type,
+                                                                    CFDictionaryRef decoder_spec,
+@@ -1075,8 +1180,11 @@
+ 
+     if (!videotoolbox->session || !vtctx->bitstream || !vtctx->bitstream_size)
+         return AVERROR_INVALIDDATA;
+ 
++    if (vtctx->gofuse_async_queue)
++        return gofuse_vt_async_submit(avctx, frame);
++
+     status = videotoolbox_session_decode_frame(avctx);
+     if (status != noErr) {
+         if (status == kVTVideoDecoderMalfunctionErr || status == kVTInvalidSessionErr)
+             vtctx->reconfig_needed = true;
+@@ -1086,9 +1194,11 @@
+ 
+     if (!vtctx->frame)
+         return AVERROR_UNKNOWN;
+ 
+-    return videotoolbox_buffer_create(avctx, frame);
++    CVPixelBufferRef image = vtctx->frame;
++    vtctx->frame = NULL;
++    return videotoolbox_buffer_create(avctx, frame, image);
+ }
+ 
+ static int videotoolbox_h264_end_frame(AVCodecContext *avctx)
+ {
+@@ -1288,8 +1398,15 @@
+ 
+     return ret;
+ }
+ 
++static void gofuse_vt_release_pixel(void *opaque, void *image)
++{
++    (void)opaque;
++    if (image)
++        CVPixelBufferRelease((CVPixelBufferRef)image);
++}
++
+ int ff_videotoolbox_common_init(AVCodecContext *avctx)
+ {
+     VTContext *vtctx = avctx->internal->hwaccel_priv_data;
+     AVHWFramesContext *hw_frames;
+@@ -1297,8 +1414,18 @@
+     int err;
+     bool full_range;
+ 
+     vtctx->logctx = avctx;
++
++    if (avctx->codec_id == AV_CODEC_ID_HEVC && !vtctx->gofuse_async_queue) {
++        const char *mode = getenv("GOFUSE_KODI_VTB_ASYNC_PIPELINE");
++        if (mode && mode[0] == '1' && mode[1] == '\0') {
++            vtctx->gofuse_async_queue = gofuse_vt_queue_create(
++                4, gofuse_vt_release_pixel, NULL);
++            if (!vtctx->gofuse_async_queue)
++                return AVERROR(ENOMEM);
++        }
++    }
+ 
+     if (!avctx->hw_frames_ctx && !avctx->hw_device_ctx &&
+             avctx->hwaccel_context)
+         return videotoolbox_start(avctx);
+@@ -1398,8 +1525,20 @@
+     .uninit         = ff_videotoolbox_uninit,
+     .priv_data_size = sizeof(VTContext),
+ };
+ 
++static void gofuse_vt_async_flush(AVCodecContext *avctx)
++{
++    VTContext *vtctx = avctx->internal->hwaccel_priv_data;
++    AVVideotoolboxContext *videotoolbox;
++    if (!vtctx || !vtctx->gofuse_async_queue)
++        return;
++    gofuse_vt_queue_seek(vtctx->gofuse_async_queue);
++    videotoolbox = videotoolbox_get_context(avctx);
++    if (videotoolbox && videotoolbox->session)
++        VTDecompressionSessionWaitForAsynchronousFrames(videotoolbox->session);
++}
++
+ const FFHWAccel ff_hevc_videotoolbox_hwaccel = {
+     .p.name         = "hevc_videotoolbox",
+     .p.type         = AVMEDIA_TYPE_VIDEO,
+     .p.id           = AV_CODEC_ID_HEVC,
+@@ -1408,8 +1547,9 @@
+     .start_frame    = videotoolbox_hevc_start_frame,
+     .decode_slice   = videotoolbox_hevc_decode_slice,
+     .decode_params  = videotoolbox_hevc_decode_params,
+     .end_frame      = videotoolbox_hevc_end_frame,
++    .flush          = gofuse_vt_async_flush,
+     .frame_params   = ff_videotoolbox_frame_params,
+     .init           = ff_videotoolbox_common_init,
+     .uninit         = ff_videotoolbox_uninit,
+     .priv_data_size = sizeof(VTContext),
+--- a/libavcodec/vt_internal.h
++++ b/libavcodec/vt_internal.h
+@@ -40,8 +40,9 @@
+ 
+     // Non-NULL if the new hwaccel API is used. This is only a separate struct
+     // to ease compatibility with the old API.
+     struct AVVideotoolboxContext *vt_ctx;
++    struct GoFuseVTQueue *gofuse_async_queue;
+ 
+     // Current H264 parameters (used to trigger decoder restart on SPS changes).
+     uint8_t                     sps[3];
+     bool                        reconfig_needed;
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1038,9 +1038,9 @@
+ OBJS-$(CONFIG_D3D12VA)                    += dxva2.o d3d12va_decode.o
+ OBJS-$(CONFIG_DXVA2)                      += dxva2.o
+ OBJS-$(CONFIG_NVDEC)                      += nvdec.o
+ OBJS-$(CONFIG_VAAPI)                      += vaapi_decode.o
+-OBJS-$(CONFIG_VIDEOTOOLBOX)               += videotoolbox.o
++OBJS-$(CONFIG_VIDEOTOOLBOX)               += videotoolbox.o vt_async_queue.o
+ OBJS-$(CONFIG_VDPAU)                      += vdpau.o
+ OBJS-$(CONFIG_VULKAN)                     += vulkan.o vulkan_video.o
+ 
+ OBJS-$(CONFIG_APV_VULKAN_HWACCEL)         += vulkan_decode.o vulkan_apv.o

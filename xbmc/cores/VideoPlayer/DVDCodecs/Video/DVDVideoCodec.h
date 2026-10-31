@@ -16,6 +16,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/mastering_display_metadata.h>
+#include <libavutil/hdr_dynamic_metadata.h>
 }
 
 #include <map>
@@ -39,6 +40,15 @@ struct DoviRpu
   int compatibilityId = 0;
   // whole RPU NAL unit (header, prefix, RPU), emulation prevention bytes removed
   std::vector<uint8_t> data;
+};
+
+// Dynamic metadata is owned by its decoded picture, including frame copies.
+struct HdrFrameMetadata
+{
+  int dolbyProfile = 0;
+  int dolbyCompatibilityId = 0;
+  bool hasParsedDolbyMetadata = false;
+  std::shared_ptr<const AVDynamicHDRPlus> hdr10Plus;
 };
 
 // should be entirely filled by all codecs
@@ -84,6 +94,7 @@ public:
   StreamHdrType hdrTypeAlt;
   std::string strDVELType;
   std::shared_ptr<const DoviRpu> doviRpu;
+  HdrFrameMetadata hdrFrameMetadata;
 
   bool hasDisplayMetadata = false;
   AVMasteringDisplayMetadata displayMetadata;

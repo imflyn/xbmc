@@ -3,8 +3,9 @@ PLATFORM=$(NATIVEPLATFORM)
 DEPS = ../../Makefile.include Makefile CMAKE-VERSION ../../download-files.include
 
 # configuration settings
-
-SETENV=CC="$(CC_FOR_BUILD)" CXX="$(CXX_FOR_BUILD)" LD=$(LD_FOR_BUILD) CFLAGS="$(NATIVE_CFLAGS)" \
+# Build the native CMake host tool against macOS, even for iOS targets.
+SETENV=SDKROOT="$(shell xcrun --sdk macosx --show-sdk-path)" \
+	CC="$(CC_FOR_BUILD)" CXX="$(CXX_FOR_BUILD)" LD=$(LD_FOR_BUILD) CFLAGS="$(NATIVE_CFLAGS)" \
 	CXXFLAGS="$(NATIVE_CXXFLAGS)" LDFLAGS="$(NATIVE_LDFLAGS)"
 
 CONFIGURE=./bootstrap --prefix=$(NATIVEPREFIX) --system-curl

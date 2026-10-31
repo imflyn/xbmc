@@ -341,7 +341,11 @@ bool CDVDVideoCodecFFmpeg::Open(CDVDStreamInfo &hints, CDVDCodecOptions &options
   const int doviProfile = hints.dovi.dv_profile;
   m_exportDoviRpu =
       (doviProfile == 5 || doviProfile == 7 || doviProfile == 8 || doviProfile == 10) &&
+#if defined(TARGET_DARWIN_IOS) || defined(TARGET_DARWIN_OSX)
+      true;
+#else
       m_processInfo.WantsDolbyVisionRpu();
+#endif
   m_av1DoviRpus.clear();
 
   const AVCodec* pCodec = nullptr;
@@ -1126,6 +1130,11 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(VideoPicture* pVideoPicture)
   pVideoPicture->qscale_type = 0;
 
   pVideoPicture->hdrType = m_hints.hdrType;
+  pVideoPicture->hdrTypeAlt = StreamHdrType::HDR_TYPE_NONE;
+  pVideoPicture->strDVELType.clear();
+  pVideoPicture->hdrFrameMetadata = {};
+  pVideoPicture->hdrFrameMetadata.dolbyProfile = m_hints.dovi.dv_profile;
+  pVideoPicture->hdrFrameMetadata.dolbyCompatibilityId = m_hints.dovi.dv_bl_signal_compatibility_id;
 
   AVFrameSideData* sd;
 
@@ -1208,8 +1217,9 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(VideoPicture* pVideoPicture)
   if (pVideoPicture->hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
   {
     sd = av_frame_get_side_data(m_pFrame, AV_FRAME_DATA_DOVI_METADATA);
-    if (sd)
+    if (sd && sd->size >= sizeof(AVDOVIMetadata))
     {
+      pVideoPicture->hdrFrameMetadata.hasParsedDolbyMetadata = true;
       AVDOVIMetadata* dovi = (AVDOVIMetadata*)sd->data;
       const AVDOVIRpuDataHeader* hdr = av_dovi_get_header(dovi);
       const AVDOVIDataMapping* mapping = av_dovi_get_mapping(dovi);
@@ -1234,11 +1244,14 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(VideoPicture* pVideoPicture)
   }
 
   if (pVideoPicture->hdrType == StreamHdrType::HDR_TYPE_HDR10 ||
+      pVideoPicture->hdrType == StreamHdrType::HDR_TYPE_HDR10PLUS ||
       pVideoPicture->hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
   {
     sd = av_frame_get_side_data(m_pFrame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
-    if (sd)
+    if (sd && sd->size >= sizeof(AVDynamicHDRPlus))
     {
+      pVideoPicture->hdrFrameMetadata.hdr10Plus =
+          std::make_shared<AVDynamicHDRPlus>(*reinterpret_cast<const AVDynamicHDRPlus*>(sd->data));
       if (pVideoPicture->hdrType == StreamHdrType::HDR_TYPE_HDR10)
         pVideoPicture->hdrType = StreamHdrType::HDR_TYPE_HDR10PLUS;
       else

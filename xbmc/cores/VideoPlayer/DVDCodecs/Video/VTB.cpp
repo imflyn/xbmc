@@ -177,14 +177,9 @@ bool CDecoder::Open(AVCodecContext *avctx, AVCodecContext* mainctx, enum AVPixel
   AVHWFramesContext *framesCtx = (AVHWFramesContext*)framesRef->data;
   framesCtx->format = AV_PIX_FMT_VIDEOTOOLBOX;
   framesCtx->sw_format = AV_PIX_FMT_NV12;
-#if defined(TARGET_DARWIN_OSX)
+#if defined(TARGET_DARWIN_OSX) || defined(TARGET_DARWIN_IOS)
   const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
-  if (descriptor && descriptor->comp[0].depth > 8)
-    framesCtx->sw_format = AV_PIX_FMT_P010LE;
-#elif defined(TARGET_DARWIN_IOS)
-  const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(avctx->sw_pix_fmt);
-  if (descriptor && descriptor->comp[0].depth > 8 &&
-      (avctx->color_trc == AVCOL_TRC_SMPTE2084 || avctx->color_trc == AVCOL_TRC_ARIB_STD_B67))
+  if ((descriptor && descriptor->comp[0].depth > 8) || avctx->bits_per_raw_sample > 8)
     framesCtx->sw_format = AV_PIX_FMT_P010LE;
 #endif
   avctx->hw_frames_ctx = framesRef;

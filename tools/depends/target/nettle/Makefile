@@ -19,6 +19,10 @@ endif
 CONFIGURE=cp -f $(CONFIG_SUB) $(CONFIG_GUESS) .; \
           ./configure --prefix=$(PREFIX) --disable-shared --disable-fat --disable-openssl --disable-documentation $(CONFIGURE_FLAGS)
 
+ifeq ($(OS),darwin_embedded)
+  CONFIGURE += CC_FOR_BUILD="$(CC_FOR_BUILD) -target arm64-apple-macos11 -isysroot $(shell xcrun --sdk macosx --show-sdk-path)"
+endif
+
 all: .installed-$(PLATFORM)
 
 
